@@ -1,6 +1,8 @@
 import random
 import re
 import time
+import os
+import yaml
 
 import numpy as np
 import torch
@@ -217,3 +219,13 @@ def to_categorical(value, limit=20, offset=0.0, num_atoms=251, transformation=Tr
     distribution.scatter_add_(-2, lower.unsqueeze(-1), lower_weight.unsqueeze(-1))
     distribution.scatter_add_(-2, upper.unsqueeze(-1), upper_weight.unsqueeze(-1))
     return distribution
+
+
+def get_config(config_path=None):
+    if config_path is None:
+        this_file_dir = os.path.dirname(os.path.abspath(__file__))
+        config_path = os.path.join(this_file_dir, 'configs/config.yaml')
+    assert config_path and os.path.exists(config_path), f'config file does not exist ({config_path})'
+    with open(config_path, 'r') as f:
+        config = yaml.load(f, Loader=yaml.FullLoader)
+    return config

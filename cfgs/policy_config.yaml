@@ -1,0 +1,26 @@
+        # policy_config = {'lr': args['lr'],
+        #                  'num_queries': chunk_size,
+        #                  'kl_weight': args['kl_weight'],
+        #                  'hidden_dim': args['hidden_dim'],
+        #                  'dim_feedforward': args['dim_feedforward'],
+        #                  'lr_backbone': lr_backbone,
+        #                  'backbone': backbone,
+        #                  'enc_layers': enc_layers,
+        #                  'dec_layers': dec_layers,
+        #                  'nheads': nheads,
+        #                  'camera_names': camera_names,
+        #                  'state_dim': state_dim,
+        #                  }
+lr : 0.0000000001
+num_queries : 1
+kl_weight : 10
+hidden_dim : 512
+dim_feedforward : 3200
+lr_backbone : 0.00001
+backbone : 'resnet34'
+enc_layers : 4
+dec_layers : 7
+nheads : 8
+camera_names : [front,wrist,left_shoulder,right_shoulder]
+state_dim : 8
+frame_stack : 8

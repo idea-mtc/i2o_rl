@@ -1,5 +1,6 @@
 import logging
 import warnings
+from act_model import ACTAgent
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -166,7 +167,7 @@ class Workspace:
             self.video_recorder.init(self.train_env, enabled=(episode == 0))
             while not time_step.last():
                 with torch.no_grad(), utils.eval_mode(self.agent):
-                    action = self.agent.act(
+                    action = self.agent.actor_act(
                         time_step.rgb_obs,
                         time_step.low_dim_obs,
                         self.global_step,
@@ -200,8 +201,8 @@ class Workspace:
 
         episode_step, episode_reward = 0, 0
         time_step = self.train_env.reset()
-        self.replay_storage.add(time_step)
-        self.demo_replay_storage.add(time_step)
+        # self.replay_storage.add(time_step)
+        # self.demo_replay_storage.add(time_step)
         self.train_video_recorder.init(time_step.rgb_obs[0])
         metrics = None
         while train_until_step(self.global_step):
@@ -236,8 +237,8 @@ class Workspace:
 
                 # reset env
                 time_step = self.train_env.reset()
-                self.replay_storage.add(time_step)
-                self.demo_replay_storage.add(time_step)
+                # self.replay_storage.add(time_step)
+                # self.demo_replay_storage.add(time_step)
                 self.train_video_recorder.init(time_step.rgb_obs[0])
                 # try to save snapshot
                 if self.cfg.save_snapshot:
@@ -253,7 +254,7 @@ class Workspace:
 
             # sample action
             with torch.no_grad(), utils.eval_mode(self.agent):
-                action = self.agent.act(
+                action = self.agent.actor_act(
                     time_step.rgb_obs,
                     time_step.low_dim_obs,
                     self.global_step,
@@ -271,8 +272,8 @@ class Workspace:
             episode_reward += time_step.reward
             if time_step.discount == 0:
                 self._success_episode += 1
-            self.replay_storage.add(time_step)
-            self.demo_replay_storage.add(time_step)
+            # self.replay_storage.add(time_step)
+            # self.demo_replay_storage.add(time_step)
             self.train_video_recorder.record(time_step.rgb_obs[0])
             episode_step += 1
             self._global_step += 1

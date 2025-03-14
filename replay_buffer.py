@@ -223,8 +223,16 @@ class ReplayBuffer(IterableDataset):
 
         # rgb_obs stacking -- channel-wise concat
         rgb_obs = np.concatenate(episode["rgb_obs"][obs_idxs], 1)
+        policy_rgb = episode["rgb_obs"][:, :, :, :, :]
+        # policy_rgb_obs = np.stack(policy_rgb[obs_idxs], axis=0)
+        policy_rgb_obs = policy_rgb[idx]
+        policy_next_rgb_obs = np.stack(policy_rgb[obs_next_idxs], axis=0)
         next_rgb_obs = np.concatenate(episode["rgb_obs"][obs_next_idxs], 1)
         # low_dim_obs stacking -- last-dim-wise concat
+        policy_qpos = episode["low_dim_obs"][:, :8]
+        # policy_q_pos = np.stack(policy_qpos[obs_idxs], axis=0)
+        policy_q_pos = policy_qpos[idx]
+        policy_next_q_pos = np.stack(policy_qpos[obs_next_idxs], axis=0)
         low_dim_obs = np.concatenate(episode["low_dim_obs"][obs_idxs], -1)
         next_low_dim_obs = np.concatenate(episode["low_dim_obs"][obs_next_idxs], -1)
 
@@ -273,6 +281,10 @@ class ReplayBuffer(IterableDataset):
             next_rgb_obs,
             next_low_dim_obs,
             demo,
+            policy_rgb_obs,
+            policy_next_rgb_obs,
+            policy_q_pos,
+            policy_next_q_pos,
         )
 
     def __iter__(self):

@@ -98,3 +98,12 @@ def zoom_in(low: torch.Tensor, high: torch.Tensor, argmax_q: torch.Tensor, bins:
     low = torch.maximum(-torch.ones_like(low), low)
     high = torch.minimum(torch.ones_like(high), high)
     return low, high
+
+def flatten_time_dim_into_channel_dim(
+    tensor: torch.Tensor, has_view_axis: bool = False
+):
+    if has_view_axis:
+        bs, v, t, ch = tensor.shape[:4]
+        return tensor.view(bs, v, t * ch, *tensor.shape[4:])
+    bs, t, ch = tensor.shape[:3]
+    return tensor.view(bs, t * ch, *tensor.shape[3:])
