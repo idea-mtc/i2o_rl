@@ -3,7 +3,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from act.transformer import build_transformer, TransformerEncoder, TransformerEncoderLayer
+from detr.models.transformer import _get_activation_fn
+from typing import Optional, List
+from torch import nn, Tensor
 import IPython
 e = IPython.embed
 import utils
@@ -15,11 +17,6 @@ from cqn_utils import (
     decode_action,
     flatten_time_dim_into_channel_dim,
 )
-
-try:
-    from torchvision.transforms import v2 as tvf
-except Exception:
-    import torchvision.transforms as tvf
 
 
 class RandomShiftsAug(nn.Module):
@@ -65,17 +62,78 @@ class ImgChLayerNorm(nn.Module):
         return x
 
 
+class TransformerEncoder(nn.Module):
+
+    def __init__(self, d_model, nhead, dim_feedforward=1028, dropout=0.1,
+                 activation="relu", normalize_before=False):
+        super().__init__()
+        self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout, batch_first=True)
+        # Implementation of Feedforward model
+        self.linear1 = nn.Linear(d_model, dim_feedforward)
+        self.dropout = nn.Dropout(dropout)
+        self.linear2 = nn.Linear(dim_feedforward, d_model)
+
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.dropout1 = nn.Dropout(dropout)
+        self.dropout2 = nn.Dropout(dropout)
+
+        self.activation = _get_activation_fn(activation)
+        self.normalize_before = normalize_before
+
+    def with_pos_embed(self, tensor, pos: Optional[Tensor]):
+        return tensor if pos is None else tensor + pos
+
+    def forward_post(self,
+                     src,
+                     src_mask: Optional[Tensor] = None,
+                     src_key_padding_mask: Optional[Tensor] = None,
+                     pos: Optional[Tensor] = None):
+        q = k = self.with_pos_embed(src, pos)
+        src2 = self.self_attn(q, k, value=src, attn_mask=src_mask,
+                              key_padding_mask=src_key_padding_mask)[0]
+        src = src + self.dropout1(src2)
+        src = self.norm1(src)
+        src2 = self.linear2(self.dropout(self.activation(self.linear1(src))))
+        src = src + self.dropout2(src2)
+        src = self.norm2(src)
+        return src
+
+    def forward_pre(self, src,
+                    src_mask: Optional[Tensor] = None,
+                    src_key_padding_mask: Optional[Tensor] = None,
+                    pos: Optional[Tensor] = None):
+        src2 = self.norm1(src)
+        q = k = self.with_pos_embed(src2, pos)
+        src2 = self.self_attn(q, k, value=src2, attn_mask=src_mask,
+                              key_padding_mask=src_key_padding_mask)[0]
+        src = src + self.dropout1(src2)
+        src2 = self.norm2(src)
+        src2 = self.linear2(self.dropout(self.activation(self.linear1(src2))))
+        src = src + self.dropout2(src2)
+        return src
+
+    def forward(self, src,
+                src_mask: Optional[Tensor] = None,
+                src_key_padding_mask: Optional[Tensor] = None,
+                pos: Optional[Tensor] = None):
+        if self.normalize_before:
+            return self.forward_pre(src, src_mask, src_key_padding_mask, pos)
+        return self.forward_post(src, src_mask, src_key_padding_mask, pos)
+
 class MultiViewCNNEncoder(nn.Module):
-    def __init__(self, obs_shape, hidden_dim=512, backbones = None):
+    def __init__(self, obs_shape, hidden_dim=256, backbones = None):
         super().__init__()
 
         assert len(obs_shape) == 4
         self.num_views = obs_shape[0]
         self.repr_dim = self.num_views * 256 * 5 * 5  # for 84,84. hard-coded
+        self.has_backbone = False
 
         if backbones is not None:
             self.input_proj = self.input_proj = nn.Conv2d(backbones[0].num_channels, hidden_dim, kernel_size=1)
             self.conv_nets = nn.ModuleList(backbones)
+            self.has_backbone = True
             # self.input_proj_robot_state = nn.Linear(state_dim, hidden_dim)
         else:
             self.conv_nets = nn.ModuleList()
@@ -95,13 +153,19 @@ class MultiViewCNNEncoder(nn.Module):
                     nn.SiLU(),
                 )
                 self.conv_nets.append(conv_net)
-
         self.apply(utils.weight_init)
 
     def forward(self, obs: torch.Tensor):
         # obs: [B, V, C, H, W]
         obs = obs / 255.0 - 0.5
         hs = []
+        if self.has_backbone:
+            all_cam_features = []
+            for v in range(self.num_views):
+                features, pos = self.conv_nets[0](obs[:, v])
+                features = features[0]
+                all_cam_features.append(self.input_proj(features))
+            return all_cam_features
         for v in range(self.num_views):
             h = self.conv_nets[v](obs[:, v])
             h = h.view(h.shape[0], -1)
@@ -120,6 +184,7 @@ class C2FCriticNetwork(nn.Module):
         levels: int,
         bins: int,
         atoms: int,
+        gripper_pose = 7*8,
     ):
         super().__init__()
         self._levels = levels
@@ -137,9 +202,15 @@ class C2FCriticNetwork(nn.Module):
             nn.LayerNorm(feature_dim),
             nn.Tanh(),
         )
+        self.adv_gp_encoder = nn.Sequential(
+            nn.Linear(gripper_pose, feature_dim, bias=False),
+            nn.LayerNorm(feature_dim),
+            nn.Tanh(),
+        )
+        self.adv_Transformer = TransformerEncoder(feature_dim, 8)
         self.adv_net = nn.Sequential(
             nn.Linear(
-                feature_dim * 2 + self._actor_dim + levels, hidden_dim, bias=False
+                feature_dim * 3 + self._actor_dim + levels, hidden_dim, bias=False
             ),
             nn.LayerNorm(hidden_dim),
             nn.SiLU(),
@@ -161,9 +232,15 @@ class C2FCriticNetwork(nn.Module):
             nn.LayerNorm(feature_dim),
             nn.Tanh(),
         )
+        self.value_gp_encoder = nn.Sequential(
+            nn.Linear(gripper_pose, feature_dim, bias=False),
+            nn.LayerNorm(feature_dim),
+            nn.Tanh(),
+        )
+        self.value_Transformer = TransformerEncoder(feature_dim, 8)
         self.value_net = nn.Sequential(
             nn.Linear(
-                feature_dim * 2 + self._actor_dim + levels, hidden_dim, bias=False
+                feature_dim * 3 + self._actor_dim + levels, hidden_dim, bias=False
             ),
             nn.LayerNorm(hidden_dim),
             nn.SiLU(),
@@ -181,7 +258,7 @@ class C2FCriticNetwork(nn.Module):
         self.value_head.bias.data.fill_(0.0)
 
     def forward(
-        self, level: int, rgb_obs: torch.Tensor, low_dim_obs, prev_action: torch.Tensor
+        self, level: int, rgb_obs: torch.Tensor, low_dim_obs, gripper_pose, prev_action: torch.Tensor
     ):
         """
         Inputs:
@@ -200,19 +277,36 @@ class C2FCriticNetwork(nn.Module):
         )
         auto = self.value_rgb_encoder(rgb_obs)
         auto2  = self.value_low_dim_encoder(low_dim_obs)
-        value_h = torch.cat(
-            [self.value_rgb_encoder(rgb_obs), self.value_low_dim_encoder(low_dim_obs)],
-            -1,
+        # auto3 = self.value_gp_encoder(gripper_pose)
+        # batch, sequence, length = gripper_pose.shape
+        # gripper_pose = gripper_pose.view(batch, -1)
+
+        value_h = torch.stack(
+            [self.value_rgb_encoder(rgb_obs), self.value_low_dim_encoder(low_dim_obs), self.value_gp_encoder(gripper_pose)],
+            dim=1,
         )
-        value_x = torch.cat([value_h, prev_action, level_id], -1)
+        value_temp = self.value_Transformer(value_h)
+        value_temp = value_temp.reshape(*value_temp.shape[:-2], -1)
+        try:
+            value_x = torch.cat([value_temp, prev_action, level_id], -1)
+        except:
+            value_temp = value_temp.unsqueeze(0)
+            value_x = torch.cat([value_temp, prev_action, level_id], -1)
         values = self.value_head(self.value_net(value_x)).view(
             -1, *self.value_output_shape
         )
 
-        adv_h = torch.cat(
-            [self.adv_rgb_encoder(rgb_obs), self.adv_low_dim_encoder(low_dim_obs)], -1
+        adv_h = torch.stack(
+            [self.adv_rgb_encoder(rgb_obs), self.adv_low_dim_encoder(low_dim_obs), self.adv_gp_encoder(gripper_pose)], dim=1
         )
-        adv_x = torch.cat([adv_h, prev_action, level_id], -1)
+        adv_temp = self.adv_Transformer(adv_h)
+        adv_temp = adv_temp.reshape(*adv_temp.shape[:-2], -1)
+        try:
+            adv_x = torch.cat([adv_temp, prev_action, level_id], -1)
+        except:
+            adv_temp = adv_temp.unsqueeze(0)
+            adv_x = torch.cat([adv_temp, prev_action, level_id], -1)
+        # adv_x = torch.cat([adv_temp, prev_action, level_id], -1)
         advs = self.adv_head(self.adv_net(adv_x)).view(-1, *self.adv_output_shape)
 
         q_logits = values + advs - advs.mean(-2, keepdim=True)
@@ -263,13 +357,13 @@ class C2FCritic(nn.Module):
             atoms,
         )
 
-    def get_action(self, rgb_obs: torch.Tensor, low_dim_obs: torch.Tensor):
+    def get_action(self, rgb_obs: torch.Tensor, low_dim_obs: torch.Tensor, gripper_pose: torch.Tensor):
         metrics = dict()
         low = self.initial_low.repeat(rgb_obs.shape[0], 1).detach()
         high = self.initial_high.repeat(rgb_obs.shape[0], 1).detach()
 
         for level in range(self.levels):
-            q_logits = self.network(level, rgb_obs, low_dim_obs, (low + high) / 2)
+            q_logits = self.network(level, rgb_obs, low_dim_obs, gripper_pose, (low + high) / 2)
             q_probs = F.softmax(q_logits, 3)
             qs = (q_probs * self.support.expand_as(q_probs).detach()).sum(3)
             argmax_q = random_action_if_within_delta(qs)
@@ -290,6 +384,7 @@ class C2FCritic(nn.Module):
         self,
         rgb_obs: torch.Tensor,
         low_dim_obs: torch.Tensor,
+        gripper_pose: torch.Tensor,
         continuous_action: torch.Tensor,
     ):
         """Compute value distributions for given obs and action.
@@ -322,7 +417,7 @@ class C2FCritic(nn.Module):
         low = self.initial_low.repeat(rgb_obs.shape[0], 1).detach()
         high = self.initial_high.repeat(rgb_obs.shape[0], 1).detach()
         for level in range(self.levels):
-            q_logits = self.network(level, rgb_obs, low_dim_obs, (low + high) / 2)
+            q_logits = self.network(level, rgb_obs, low_dim_obs, gripper_pose, (low + high) / 2)
             argmax_q = discrete_action[..., level, :].long()  # [..., L, D] -> [..., D]
 
             # (Log) Probs [..., D, bins, atoms]
@@ -366,6 +461,7 @@ class C2FCritic(nn.Module):
         next_rgb_obs: torch.Tensor,
         next_low_dim_obs: torch.Tensor,
         next_continuous_action: torch.Tensor,
+        next_gripper_pose: torch.Tensor,
         reward: torch.Tensor,
         discount: torch.Tensor,
     ):
@@ -383,7 +479,7 @@ class C2FCritic(nn.Module):
             m: [B, L, D, atoms] shaped tensor for value distribution
         """
         next_q_probs_a = self.forward(
-            next_rgb_obs, next_low_dim_obs, next_continuous_action
+            next_rgb_obs, next_low_dim_obs, next_gripper_pose, next_continuous_action
         )[1]
 
         shape = next_q_probs_a.shape  # [B, L, D, atoms]
@@ -524,9 +620,6 @@ class CQNAgent:
         self.critic_opt = torch.optim.AdamW(
             self.critic.parameters(), lr=lr, weight_decay=weight_decay
         )
-        self.actor_opt = torch.optim.AdamW(
-            self.actor.parameters(), lr = lr, weight_decay = weight_decay
-        )
 
         # data augmentation
         self.aug = RandomShiftsAug(pad=4)
@@ -541,15 +634,15 @@ class CQNAgent:
         self.training = training
         self.encoder.train(training)
         self.critic.train(training)
-        self.actor.train(training)
 
-    def act(self, rgb_obs, low_dim_obs, step, eval_mode):
+    def act(self, rgb_obs, low_dim_obs, gripper_pose, step, eval_mode):
         rgb_obs = torch.as_tensor(rgb_obs, device=self.device).unsqueeze(0)
         low_dim_obs = torch.as_tensor(low_dim_obs, device=self.device).unsqueeze(0)
+        gripper_pose = torch.as_tensor(gripper_pose, device=self.device, dtype=torch.float).unsqueeze(0)
         rgb_obs = self.encoder(rgb_obs)
         stddev = utils.schedule(self.stddev_schedule, step)
         action, _ = self.critic_target.get_action(
-            rgb_obs, low_dim_obs
+            rgb_obs, low_dim_obs, gripper_pose
         )  # use critic_target
         stddev = torch.ones_like(action) * stddev
         dist = utils.TruncatedNormal(action, stddev)
@@ -662,16 +755,16 @@ class CQNAgent:
     ):
         metrics = dict()
         with torch.no_grad():
-            next_action, mets = self.critic.get_action(next_rgb_obs, next_low_dim_obs)
+            next_action, mets = self.critic.get_action(next_rgb_obs, next_low_dim_obs, gripper_pose)
             target_q_probs_a = self.critic_target.compute_target_q_dist(
-                next_rgb_obs, next_low_dim_obs, next_action, reward, discount
+                next_rgb_obs, next_low_dim_obs, next_action, next_gripper_pose, reward, discount
             )
             if self.use_logger:
                 metrics.update(**mets)
 
         # Cross entropy loss for C51
         q_probs, q_probs_a, log_q_probs, log_q_probs_a = self.critic(
-            rgb_obs, low_dim_obs, action
+            rgb_obs, low_dim_obs, gripper_pose, action
         )
         # next_q_probs, next_q_probs_a, next_log_q_probs, next_log_q_probs_a = self.critic(
         #     rgb_obs, low_dim_obs, action

@@ -42,7 +42,7 @@ def soft_update_params(net, target_net, tau):
 
 def to_torch(xs, device):
     
-    return tuple(torch.as_tensor(x, device=device) for x in xs)
+    return tuple(torch.as_tensor(x, device=device, dtype=torch.float) for x in xs)
 
 
 def weight_init(m):

@@ -410,6 +410,7 @@ class RLBench:
     def _initialize_frame_stack(self):
         # Create deques for frame stacking
         self._low_dim_obses = deque([], maxlen=self._frame_stack)
+        self._gripper_pose = deque([], maxlen=self._frame_stack)
         self._frames = {
             camera_key: deque([], maxlen=self._frame_stack)
             for camera_key in self._camera_keys
@@ -505,7 +506,10 @@ class RLBench:
             ],
             0,
         )
-        out["gripper_pose"] = obs["gripper_pose"]
+        gripper_pose = obs["gripper_pose"]
+        for _ in range(self._frame_stack):
+            self._gripper_pose.append(gripper_pose)
+        out["gripper_pose"] = np.array(self._gripper_pose)
         out["task_low_dim_state"] = obs["task_low_dim_state"]
         return out
 
