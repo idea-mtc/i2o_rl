@@ -2,6 +2,7 @@ import logging
 
 from gymnasium import spaces
 import numpy as np
+import cv2
 from typing import Union, Dict, Any, NamedTuple
 from collections import deque
 
@@ -17,6 +18,19 @@ from rlbench.utils import name_to_task_class
 from rlbench.action_modes.arm_action_modes import (
     JointPosition,
 )
+from dds_cloudapi_sdk import Config
+from dds_cloudapi_sdk import Client
+from dds_cloudapi_sdk.tasks.dinox import DinoxTask
+from dds_cloudapi_sdk.tasks.detection import DetectionTask
+from dds_cloudapi_sdk.tasks.types import DetectionTarget
+from dds_cloudapi_sdk import TextPrompt
+
+# using supervision for visualization
+import os
+import cv2
+import numpy as np
+import supervision as sv
+from pathlib import Path
 
 from dm_env import StepType, specs
 
@@ -420,7 +434,7 @@ class RLBench:
         # Setup action/observation spaces
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=self._env.action_shape)
         self.low_dim_observation_space = spaces.Box(
-            low=-np.inf, high=np.inf, shape=(15 * self._frame_stack,), dtype=np.float32
+            low=-np.inf, high=np.inf, shape=(18 * self._frame_stack,), dtype=np.float32
         )  # hard-coded: joint: 7, gripper_open: 1
         self.low_dim_raw_observation_space = spaces.Box(
             low=-np.inf, high=np.inf, shape=(8,), dtype=np.float32
@@ -473,16 +487,64 @@ class RLBench:
     def _extract_obs(self, obs) -> Dict[str, np.ndarray]:
         obs = vars(obs)
         out = dict()
-
-        # Get low-dimensional state with stacking
-        # for key in self._state_keys:
-        #     print(key)
-        #     print(obs[key])
         low_dim_obs = np.hstack(
             [obs[key] for key in ("joint_positions", "gripper_open", "gripper_pose")], dtype=np.float32
         )
 
-        # gripper_pose = np.hstack(obs["gripper_pose"])
+        if False:
+            temp = obs[f"wrist_rgb"].transpose(0, 1, 2).copy()
+            temp = np.array(temp)
+            if temp.dtype != np.uint8:  # 确保是 uint8
+                temp = (temp * 255).clip(0, 255).astype(np.uint8)
+            cv2.imwrite("/home/lenovo/project/CQN_Improve/outputs/temp.png", temp)
+            ###dino-v2
+            API_TOKEN = "f1a20063f5388be297e707614b6ee9c1"
+            TEXT_PROMPT = "handle"
+            OUTPUT_DIR = Path("/home/lenovo/project/CQN_Improve/outputs/open_world_detection")
+            OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+            token = API_TOKEN
+            config = Config(token)
+            client = Client(config)
+            IMG_PATH = "/home/lenovo/project/CQN_Improve/outputs/temp.png"
+            image_url = client.upload_file(IMG_PATH)
+            task = DinoxTask(
+                image_url=image_url,
+                prompts=[TextPrompt(text=TEXT_PROMPT)],
+                bbox_threshold=0.25,
+                targets=[DetectionTarget.BBox]
+            )
+            client.run_task(task)
+            predictions = task.result.objects
+            classes = [x.strip().lower() for x in TEXT_PROMPT.split('.') if x]
+            class_name_to_id = {name: id for id, name in enumerate(classes)}
+            class_id_to_name = {id: name for name, id in class_name_to_id.items()}
+            boxes = []
+            confidences = []
+            class_names = []
+            class_ids = []
+            for idx, obj in enumerate(predictions):
+                boxes.append(obj.bbox)
+                confidences.append(obj.score)
+                cls_name = obj.category.lower().strip()
+                class_names.append(cls_name)
+                class_ids.append(class_name_to_id[cls_name])
+            boxes = np.array(boxes)
+            # boxes_stack = np.hstack([boxes[i] for i in range(len(boxes))])
+            class_ids = np.array(class_ids)
+            low_dim_obs = np.hstack([low_dim_obs, boxes[0]],dtype=np.float32)
+            img = cv2.imread(IMG_PATH)
+            detections = sv.Detections(
+                xyxy = boxes,
+                class_id = class_ids,
+            )
+
+            box_annotator = sv.BoxAnnotator()
+            annotated_frame = box_annotator.annotate(scene=img.copy(), detections=detections)
+            cv2.imwrite(os.path.join(OUTPUT_DIR, "annotated_demo_image.jpg"), annotated_frame)
+        task_low_dim_dict = obs["task_low_dim_state"]
+        values = list(task_low_dim_dict.values())
+        values = values[-3:] # hard_code
+        low_dim_obs = np.hstack([low_dim_obs, values[1]],dtype=np.float32)
 
         if len(self._low_dim_obses) == 0:
             for _ in range(self._frame_stack):

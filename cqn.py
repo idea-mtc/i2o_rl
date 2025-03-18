@@ -94,6 +94,37 @@ class MultiViewCNNEncoder(nn.Module):
         h = torch.cat(hs, -1)
         return h
 
+class CrossAttentionFusion(nn.Module):
+    def __init__(self, feature_dim, num_heads=4):
+        super().__init__()
+        self.query_proj = nn.Linear(feature_dim, feature_dim)  # 投影 Query
+        self.key_proj = nn.Linear(feature_dim, feature_dim)  # 投影 Key
+        self.value_proj = nn.Linear(feature_dim, feature_dim)  # 投影 Value
+        self.attn = nn.MultiheadAttention(embed_dim=feature_dim, num_heads=num_heads)
+
+    def forward(self, low_dim_feat, rgb_feat):
+        """
+        low_dim_feat: (batch_size, feature_dim)  # Query
+        rgb_feat: (batch_size, feature_dim)      # Key & Value
+        """
+        Q = self.query_proj(low_dim_feat).unsqueeze(0)  # (1, batch, feature_dim)
+        K = self.key_proj(rgb_feat).unsqueeze(0)  # (1, batch, feature_dim)
+        V = self.value_proj(rgb_feat).unsqueeze(0)  # (1, batch, feature_dim)
+
+        attn_output, _ = self.attn(Q, K, V)  # (1, batch, feature_dim)
+        return attn_output.squeeze(0)  # (batch, feature_dim)
+
+class BiCrossAttentionFusion(nn.Module):
+    def __init__(self, feature_dim, num_heads=4):
+        super().__init__()
+        self.cross_attn_1 = CrossAttentionFusion(feature_dim, num_heads)
+        self.cross_attn_2 = CrossAttentionFusion(feature_dim, num_heads)
+
+    def forward(self, low_dim_feat, rgb_feat):
+        fused_1 = self.cross_attn_1(low_dim_feat, rgb_feat)  # 状态关注视觉
+        fused_2 = self.cross_attn_2(rgb_feat, low_dim_feat)  # 视觉关注状态
+        return torch.cat([fused_1, fused_2], dim=-1)  # 连接两个特征
+
 
 class C2FCriticNetwork(nn.Module):
     def __init__(
@@ -123,6 +154,7 @@ class C2FCriticNetwork(nn.Module):
             nn.LayerNorm(feature_dim),
             nn.Tanh(),
         )
+        self.adv_fusion = BiCrossAttentionFusion(feature_dim)
         self.adv_net = nn.Sequential(
             nn.Linear(
                 feature_dim * 2 + self._actor_dim + levels, hidden_dim, bias=False
@@ -147,6 +179,7 @@ class C2FCriticNetwork(nn.Module):
             nn.LayerNorm(feature_dim),
             nn.Tanh(),
         )
+        self.value_fusion = BiCrossAttentionFusion(feature_dim)
         self.value_net = nn.Sequential(
             nn.Linear(
                 feature_dim * 2 + self._actor_dim + levels, hidden_dim, bias=False
@@ -187,17 +220,25 @@ class C2FCriticNetwork(nn.Module):
         auto = self.value_rgb_encoder(rgb_obs)
         auto2  = self.value_low_dim_encoder(low_dim_obs)
         value_h = torch.cat(
-            [self.value_rgb_encoder(rgb_obs), self.value_low_dim_encoder(low_dim_obs)],
+            [auto, auto2],
             -1,
         )
+        value_fusion = self.value_fusion(auto, auto2)
+        value_h = value_h + value_fusion
+        
         value_x = torch.cat([value_h, prev_action, level_id], -1)
         values = self.value_head(self.value_net(value_x)).view(
             -1, *self.value_output_shape
         )
 
+        auto3 = self.adv_rgb_encoder(rgb_obs)
+        auto4 = self.adv_low_dim_encoder(low_dim_obs)
+
         adv_h = torch.cat(
-            [self.adv_rgb_encoder(rgb_obs), self.adv_low_dim_encoder(low_dim_obs)], -1
+            [auto3, auto4], -1
         )
+        adv_fusion = self.adv_fusion(auto3, auto4)
+        adv_h = adv_h+adv_fusion
         adv_x = torch.cat([adv_h, prev_action, level_id], -1)
         advs = self.adv_head(self.adv_net(adv_x)).view(-1, *self.adv_output_shape)
 
@@ -575,7 +616,7 @@ class CQNAgent:
                 metrics.update(**mets)
         #     print("next_actiom:{}".format(next_action.shape))
         #     print("action{}".format(action))
-        
+
         # print("rgb_obs_shape:{}".format(rgb_obs.shape))
 
         # Cross entropy loss for C51
@@ -602,6 +643,14 @@ class CQNAgent:
                 metrics["ratio_of_demos"] = demos.mean().item()
 
             if torch.sum(demos) > 0:
+                stddev = utils.schedule(self.stddev_schedule, step)
+                current_action, _ = self.critic.get_action(rgb_obs, low_dim_obs)
+                stddev = torch.ones_like(current_action) * stddev
+                dist = utils.TruncatedNormal(current_action, stddev)
+                current_action = dist.mean
+                current_action = self.critic.encode_decode_action(current_action)
+                bc_loss = F.l1_loss(current_action, action, reduction='none')
+                bc_loss = bc_loss.mean(dim=-1)
                 # q_probs: [B, L, D, bins, atoms], q_probs_a: [B, L, D, atoms]
                 q_probs_cdf = torch.cumsum(q_probs, -1)
                 q_probs_a_cdf = torch.cumsum(q_probs_a, -1)
@@ -613,9 +662,11 @@ class CQNAgent:
                     .mean([-1, -2, -3])
                 )
                 bc_fosd_loss = (bc_fosd_loss * demos).sum() / demos.sum()
-                critic_loss = critic_loss + self.bc_lambda * bc_fosd_loss
+                bc_loss = (bc_loss * demos).sum()/demos.sum()
+                critic_loss = critic_loss + self.bc_lambda * bc_fosd_loss + 0.5 * bc_loss
                 if self.use_logger:
                     metrics["bc_fosd_loss"] = bc_fosd_loss.item()
+                    metrics["bc_loss"] = bc_loss.item()
 
                 if self.bc_margin > 0:
                     qs = (q_probs * self.critic.support.expand_as(q_probs)).sum(-1)
@@ -706,6 +757,10 @@ class CQNAgent:
             next_rgb_obs,
             next_low_dim_obs,
             demos,
+            policy_rgb_obs,
+            policy_next_rgb_obs,
+            policy_q_pos,
+            policy_next_q_pos,
         ) = utils.to_torch(batch, self.device)
 
         # augment

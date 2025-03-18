@@ -16,10 +16,10 @@ import numpy as np
 import torch
 from dm_env import specs
 
-import rlbench_env_1
+import rlbench_env
 import utils
 from logger import Logger
-from replay_buffer_1 import ReplayBufferStorage, make_replay_loader
+from replay_buffer import ReplayBufferStorage, make_replay_loader
 from video import TrainVideoRecorder, VideoRecorder
 os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = os.path.expanduser('~/CoppeliaSim')
 torch.backends.cudnn.benchmark = True
@@ -60,7 +60,7 @@ class Workspace:
 
     def setup(self):
         # create envs train_env->_env-> get_task(TaskEnv)
-        self.train_env = rlbench_env_1.make(
+        self.train_env = rlbench_env.make(
             self.cfg.task_name,
             self.cfg.episode_length,
             self.cfg.frame_stack,
@@ -83,8 +83,8 @@ class Workspace:
             specs.Array((1,), np.float32, "demo"),
             specs.Array((7,), np.float32, "gripper_pose"),
             specs.Array((7,), np.float32, "task_low_dim_state"),
-            specs.Array((7,), np.float32, "joint_positions"),
-            specs.Array((1,), np.float32, "gripper_open"),
+            # specs.Array((7,), np.float32, "joint_positions"),
+            # specs.Array((1,), np.float32, "gripper_open"),
         )
 
         data_specs_demo = (
@@ -96,8 +96,8 @@ class Workspace:
             specs.Array((1,), np.float32, "demo"),
             specs.Array((7,), np.float32, "gripper_pose"),
             specs.Array((7,), np.float32, "task_low_dim_state"),
-            specs.Array((7,), np.float32, "joint_positions"),
-            specs.Array((1,), np.float32, "gripper_open"),
+            # specs.Array((7,), np.float32, "joint_positions"),
+            # specs.Array((1,), np.float32, "gripper_open"),
         )
 
         self.replay_storage = ReplayBufferStorage(
@@ -174,7 +174,7 @@ class Workspace:
                     action = self.agent.act(
                         time_step.rgb_obs,
                         time_step.low_dim_obs,
-                        time_step.gripper_pose,
+                        # time_step.gripper_pose,
                         self.global_step,
                         eval_mode=True,
                     )
@@ -262,7 +262,7 @@ class Workspace:
                 action = self.agent.act(
                     time_step.rgb_obs,
                     time_step.low_dim_obs,
-                    time_step.gripper_pose,
+                    # time_step.gripper_pose,
                     self.global_step,
                     eval_mode=False,
                 )
@@ -276,10 +276,10 @@ class Workspace:
             # take env step
             time_step = self.train_env.step(action)
             episode_reward += time_step.reward
-            if time_step.discount == 0:
+            if time_step.reward == 1:
                 self._success_episode += 1
-            # self.replay_storage.add(time_step)
-            # self.demo_replay_storage.add(time_step)
+            self.replay_storage.add(time_step)
+            self.demo_replay_storage.add(time_step)
             self.train_video_recorder.record(time_step.rgb_obs[0])
             episode_step += 1
             self._global_step += 1

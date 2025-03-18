@@ -576,8 +576,8 @@ class CQNAgent:
             v_max,
         ).to(device)
         self.critic_target.load_state_dict(self.critic.state_dict())
-        policy_config = get_config("/home/lenovo/project/CQN_Improve/cfgs/policy_config.yaml")
-        self.actor = ACTPolicy(policy_config).to(device)
+        # policy_config = get_config("/home/lenovo/project/CQN_Improve/cfgs/policy_config.yaml")
+        # self.actor = ACTPolicy(policy_config).to(device)
         # optimizers
         self.encoder_opt = torch.optim.AdamW(
             self.encoder.parameters(), lr=lr, weight_decay=weight_decay
@@ -585,9 +585,9 @@ class CQNAgent:
         self.critic_opt = torch.optim.AdamW(
             self.critic.parameters(), lr=lr, weight_decay=weight_decay
         )
-        self.actor_opt = torch.optim.AdamW(
-            self.actor.parameters(), lr = lr, weight_decay = weight_decay
-        )
+        # self.actor_opt = torch.optim.AdamW(
+        #     self.actor.parameters(), lr = lr, weight_decay = weight_decay
+        # )
 
         # data augmentation
         self.aug = RandomShiftsAug(pad=4)
@@ -600,9 +600,9 @@ class CQNAgent:
 
     def train(self, training=True):
         self.training = training
-        # self.encoder.train(training)
-        # self.critic.train(training)
-        self.actor.train(training)
+        self.encoder.train(training)
+        self.critic.train(training)
+        # self.actor.train(training)
 
     def act(self, rgb_obs, low_dim_obs, step, eval_mode):
         rgb_obs = torch.as_tensor(rgb_obs, device=self.device).unsqueeze(0)
@@ -758,20 +758,20 @@ class CQNAgent:
             policy_next_q_pos,
         ) = utils.to_torch(batch, self.device)
 
-        if torch.sum(demos) > 0:
-            new_demos = demos.squeeze(1)
-            image = policy_rgb_obs.float()
-            image = image[new_demos.bool()]
+        # if torch.sum(demos) > 0:
+        #     new_demos = demos.squeeze(1)
+        #     image = policy_rgb_obs.float()
+        #     image = image[new_demos.bool()]
             
-            seq_action = action[new_demos.bool()]
-            seq_action = seq_action.unsqueeze(1)
-            is_pad = seq_action.sum(axis=-1) == 0
-            policy_q_pos = policy_q_pos[new_demos.bool()]
-            loss_dict = self.actor(policy_q_pos, image, seq_action, is_pad)
-            self.actor_opt.zero_grad(set_to_none=True)
-            loss_dict["loss"].backward()
-            metrics["actor_loss"] = loss_dict["loss"].item()
-            self.actor_opt.step()
+        #     seq_action = action[new_demos.bool()]
+        #     seq_action = seq_action.unsqueeze(1)
+        #     is_pad = seq_action.sum(axis=-1) == 0
+        #     policy_q_pos = policy_q_pos[new_demos.bool()]
+        #     loss_dict = self.actor(policy_q_pos, image, seq_action, is_pad)
+        #     self.actor_opt.zero_grad(set_to_none=True)
+        #     loss_dict["loss"].backward()
+        #     metrics["actor_loss"] = loss_dict["loss"].item()
+        #     self.actor_opt.step()
         
         # augment
         rgb_obs = rgb_obs.float()
@@ -791,23 +791,23 @@ class CQNAgent:
             metrics["batch_reward"] = reward.mean().item()
 
         # update critic
-        # metrics.update(
-        #     self.update_critic(
-        #         rgb_obs,
-        #         low_dim_obs,
-        #         gripper_pose,
-        #         next_gripper_pose,
-        #         task_low_dim_state,
-        #         next_task_low_dim_state,
-        #         action,
-        #         reward,
-        #         discount,
-        #         next_rgb_obs,
-        #         next_low_dim_obs,
-        #         demos,
-        #         step,
-        #     )
-        # )
+        metrics.update(
+            self.update_critic(
+                rgb_obs,
+                low_dim_obs,
+                gripper_pose,
+                next_gripper_pose,
+                task_low_dim_state,
+                next_task_low_dim_state,
+                action,
+                reward,
+                discount,
+                next_rgb_obs,
+                next_low_dim_obs,
+                demos,
+                step,
+            )
+        )
 
         # update critic target
         utils.soft_update_params(

@@ -526,6 +526,8 @@ class RLBench:
         gripper_pose = obs["gripper_pose"]
         for _ in range(self._frame_stack):
             self._gripper_pose.append(gripper_pose)
+        out["gripper_pose"] = np.array(list(self._gripper_pose), dtype=np.float32)
+        out["sequence_low_dim"] = np.array(list(self._low_dim_obses), dtype = np.float32)
         out["gripper_pose"] = np.concatenate(list(self._gripper_pose), axis=0,dtype=np.float32)
         out["task_low_dim_state"] = obs["task_low_dim_state"]
         return out

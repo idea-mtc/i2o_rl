@@ -62,7 +62,12 @@ class ReplayBufferStorage:
                 self._current_episode[spec.name].append(value)
                 continue
             if spec.name == "gripper_pose":
+                # value = value[0]
                 value = value[...,-7:]
+                self._current_episode[spec.name].append(value)
+                continue
+            if spec.name == "sequence_low_dim":
+                value = value[0]
                 self._current_episode[spec.name].append(value)
                 continue
             assert spec.shape == value.shape and spec.dtype == value.dtype, (
@@ -260,6 +265,8 @@ class ReplayBuffer(IterableDataset):
         next_task_low_dim_state = np.stack([next_task_low_dim_state[i] for i in range(len(next_task_low_dim_state))], axis = 0)
         gripper_pose = np.concatenate([episode["gripper_pose"][i] for i in obs_idxs], axis=-1)
         next_gripper_pose = np.concatenate([episode["gripper_pose"][i] for i in obs_next_idxs], axis=-1)
+        # gripper_pose = np.stack([episode["gripper_pose"][i][0] for i in obs_idxs], axis=0)
+        # next_gripper_pose = np.stack([episode["gripper_pose"][i][0] for i in obs_next_idxs], axis=0)
         action = episode["action"][idx]
         reward = np.zeros_like(episode["reward"][idx])
         discount = np.ones_like(episode["discount"][idx])

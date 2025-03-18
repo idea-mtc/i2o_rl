@@ -64,19 +64,19 @@ class ImgChLayerNorm(nn.Module):
 
 class TransformerEncoder(nn.Module):
 
-    def __init__(self, d_model, nhead, dim_feedforward=1028, dropout=0.1,
+    def __init__(self, d_model, nhead, dim_feedforward=256, dropout=0,
                  activation="relu", normalize_before=False):
         super().__init__()
         self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout, batch_first=True)
         # Implementation of Feedforward model
         self.linear1 = nn.Linear(d_model, dim_feedforward)
-        self.dropout = nn.Dropout(dropout)
+        # self.dropout = nn.Dropout(dropout)
         self.linear2 = nn.Linear(dim_feedforward, d_model)
 
-        self.norm1 = nn.LayerNorm(d_model)
-        self.norm2 = nn.LayerNorm(d_model)
-        self.dropout1 = nn.Dropout(dropout)
-        self.dropout2 = nn.Dropout(dropout)
+        # self.norm1 = nn.LayerNorm(d_model)
+        # self.norm2 = nn.LayerNorm(d_model)
+        # self.dropout1 = nn.Dropout(dropout)
+        # self.dropout2 = nn.Dropout(dropout)
 
         self.activation = _get_activation_fn(activation)
         self.normalize_before = normalize_before
@@ -92,26 +92,19 @@ class TransformerEncoder(nn.Module):
         q = k = self.with_pos_embed(src, pos)
         src2 = self.self_attn(q, k, value=src, attn_mask=src_mask,
                               key_padding_mask=src_key_padding_mask)[0]
-        src = src + self.dropout1(src2)
-        src = self.norm1(src)
-        src2 = self.linear2(self.dropout(self.activation(self.linear1(src))))
-        src = src + self.dropout2(src2)
-        src = self.norm2(src)
+        src = self.linear2(self.activation(self.linear1(src2)))
+        # src = src + self.dropout2(src2)
         return src
 
     def forward_pre(self, src,
                     src_mask: Optional[Tensor] = None,
                     src_key_padding_mask: Optional[Tensor] = None,
                     pos: Optional[Tensor] = None):
-        src2 = self.norm1(src)
-        q = k = self.with_pos_embed(src2, pos)
-        src2 = self.self_attn(q, k, value=src2, attn_mask=src_mask,
+        q = k = self.with_pos_embed(src, pos)
+        src2 = self.self_attn(q, k, value=src, attn_mask=src_mask,
                               key_padding_mask=src_key_padding_mask)[0]
-        src = src + self.dropout1(src2)
-        src2 = self.norm2(src)
-        src2 = self.linear2(self.dropout(self.activation(self.linear1(src2))))
-        src = src + self.dropout2(src2)
-        return src
+        src2 = self.linear2(self.activation(self.linear1(src2)))
+        return src2
 
     def forward(self, src,
                 src_mask: Optional[Tensor] = None,
@@ -207,7 +200,7 @@ class C2FCriticNetwork(nn.Module):
             nn.LayerNorm(feature_dim),
             nn.Tanh(),
         )
-        self.adv_Transformer = TransformerEncoder(feature_dim, 8)
+        self.adv_Transformer = TransformerEncoder(feature_dim, 1)
         self.adv_net = nn.Sequential(
             nn.Linear(
                 feature_dim * 3 + self._actor_dim + levels, hidden_dim, bias=False
@@ -237,7 +230,7 @@ class C2FCriticNetwork(nn.Module):
             nn.LayerNorm(feature_dim),
             nn.Tanh(),
         )
-        self.value_Transformer = TransformerEncoder(feature_dim, 8)
+        self.value_Transformer = TransformerEncoder(feature_dim, 4)
         self.value_net = nn.Sequential(
             nn.Linear(
                 feature_dim * 3 + self._actor_dim + levels, hidden_dim, bias=False
@@ -285,8 +278,10 @@ class C2FCriticNetwork(nn.Module):
             [self.value_rgb_encoder(rgb_obs), self.value_low_dim_encoder(low_dim_obs), self.value_gp_encoder(gripper_pose)],
             dim=1,
         )
+        value_src = torch.cat([self.value_rgb_encoder(rgb_obs), self.value_low_dim_encoder(low_dim_obs), self.value_gp_encoder(gripper_pose)],-1)
         value_temp = self.value_Transformer(value_h)
-        value_temp = value_temp.reshape(*value_temp.shape[:-2], -1)
+        value_temp = value_temp.reshape(*value_temp.shape[:-2], -1) + value_src
+        value_temp = value_src
         try:
             value_x = torch.cat([value_temp, prev_action, level_id], -1)
         except:
@@ -299,8 +294,10 @@ class C2FCriticNetwork(nn.Module):
         adv_h = torch.stack(
             [self.adv_rgb_encoder(rgb_obs), self.adv_low_dim_encoder(low_dim_obs), self.adv_gp_encoder(gripper_pose)], dim=1
         )
+        adv_src = torch.cat([self.value_rgb_encoder(rgb_obs), self.value_low_dim_encoder(low_dim_obs), self.value_gp_encoder(gripper_pose)],-1)
         adv_temp = self.adv_Transformer(adv_h)
-        adv_temp = adv_temp.reshape(*adv_temp.shape[:-2], -1)
+        adv_temp = adv_temp.reshape(*adv_temp.shape[:-2], -1) + adv_src
+        adv_temp = adv_src
         try:
             adv_x = torch.cat([adv_temp, prev_action, level_id], -1)
         except:

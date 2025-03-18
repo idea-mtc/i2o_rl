@@ -10,7 +10,7 @@ discount: 0.99
 # train settings
 num_seed_frames: 0
 # eval
-eval_every_frames: 2500
+eval_every_frames: 1000
 num_eval_episodes: 25
 # snapshot
 save_snapshot: true
@@ -40,7 +40,7 @@ arm_max_velocity: 2.0
 arm_max_acceleration: 8.0
 
 agent:
-  _target_: i2o_rl.CQNAgent
+  _target_: cqn.CQNAgent
   rgb_obs_shape: ??? # to be specified later
   low_dim_obs_shape: ??? # to be specified later
   action_shape: ??? # to be specified later
