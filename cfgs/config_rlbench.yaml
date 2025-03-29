@@ -1,6 +1,6 @@
 defaults:
   - _self_
-  - rlbench_task@_global_: open_door
+  - rlbench_task@_global_: put_books_on_bookshelf
   - override hydra/launcher: submitit_local
 
 # task settings

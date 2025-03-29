@@ -544,7 +544,10 @@ class RLBench:
         task_low_dim_dict = obs["task_low_dim_state"]
         values = list(task_low_dim_dict.values())
         values = values[-3:] # hard_code
-        low_dim_obs = np.hstack([low_dim_obs, values[1]],dtype=np.float32)
+        try:
+            low_dim_obs = np.hstack([low_dim_obs, values[1]],dtype=np.float32)
+        except:
+            low_dim_obs = np.hstack([low_dim_obs,[0,0,0]],dtype=np.float32)
 
         if len(self._low_dim_obses) == 0:
             for _ in range(self._frame_stack):

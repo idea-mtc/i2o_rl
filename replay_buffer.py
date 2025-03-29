@@ -246,13 +246,21 @@ class ReplayBuffer(IterableDataset):
             task_low_dim_dict = episode["task_low_dim_state"][i]
             values = list(task_low_dim_dict.values())
             # print(values)
-            temp = np.stack(values).flatten()
+            try:
+                temp = np.stack(values).flatten()
+            except:
+                values = [0,0,0]
+                temp = np.stack(values).flatten()
             task_low_dim_state.append(temp)
         next_task_low_dim_state = []
         for i in obs_next_idxs:
             task_low_dim_dict = episode["task_low_dim_state"][i]
             values = list(task_low_dim_dict.values())
-            temp = np.stack(values).flatten()
+            try:
+                temp = np.stack(values).flatten()
+            except:
+                values = [0,0,0]
+                temp = np.stack(values).flatten()
             next_task_low_dim_state.append(temp)
         
         task_low_dim_state = np.stack([task_low_dim_state[i] for i in range(len(task_low_dim_state))], axis = 0)
