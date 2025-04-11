@@ -2,6 +2,7 @@ import logging
 
 from gymnasium import spaces
 import numpy as np
+import cv2
 from typing import Union, Dict, Any, NamedTuple
 from collections import deque
 
@@ -17,6 +18,25 @@ from rlbench.utils import name_to_task_class
 from rlbench.action_modes.arm_action_modes import (
     JointPosition,
 )
+from dds_cloudapi_sdk import Config
+from dds_cloudapi_sdk import Client
+from dds_cloudapi_sdk.tasks.dinox import DinoxTask
+from dds_cloudapi_sdk.tasks.detection import DetectionTask
+from dds_cloudapi_sdk.tasks.types import DetectionTarget
+from dds_cloudapi_sdk import TextPrompt
+
+# using supervision for visualization
+import os
+import cv2
+import numpy as np
+import supervision as sv
+from pathlib import Path
+
+import torch
+import torch.nn.functional as F
+import numpy as np
+from scipy.ndimage import label
+from skimage.transform import resize
 
 from dm_env import StepType, specs
 
@@ -26,11 +46,10 @@ class TimeStep(NamedTuple):
     reward: Any
     discount: Any
     rgb_obs: Any
+    vl_obs: Any
     low_dim_obs: Any
     gripper_pose: Any
     task_low_dim_state: Any
-    joint_positions: Any
-    gripper_open: Any
     demo: Any
 
     def first(self):
@@ -54,12 +73,11 @@ class ExtendedTimeStep(NamedTuple):
     reward: Any
     discount: Any
     rgb_obs: Any
+    vl_obs: Any
     low_dim_obs: Any
     action: Any
     gripper_pose: Any
     task_low_dim_state: Any
-    joint_positions: Any
-    gripper_open: Any
     demo: Any
 
     def first(self):
@@ -96,6 +114,7 @@ class ExtendedTimeStepWrapper:
             action = np.zeros(action_spec.shape, dtype=action_spec.dtype)
         return ExtendedTimeStep(
             rgb_obs=time_step.rgb_obs,
+            vl_obs = time_step.vl_obs,
             low_dim_obs=time_step.low_dim_obs,
             step_type=time_step.step_type,
             action=action,
@@ -103,8 +122,6 @@ class ExtendedTimeStepWrapper:
             discount=time_step.discount or 1.0,
             gripper_pose=time_step.gripper_pose,
             task_low_dim_state=time_step.task_low_dim_state,
-            joint_positions=time_step.joint_positions,
-            gripper_open=time_step.gripper_open,
             demo=time_step.demo or 0.0,
         )
 
@@ -113,6 +130,9 @@ class ExtendedTimeStepWrapper:
 
     def rgb_observation_spec(self):
         return self._env.rgb_observation_spec()
+
+    def vl_observation_spec(self):
+        return self._env.vl_observation_spec()
 
     def low_dim_raw_observation_spec(self):
         return self._env.low_dim_raw_observation_spec()
@@ -149,6 +169,7 @@ class RLBench:
         self._arm_max_velocity = arm_max_velocity
         self._arm_max_acceleration = arm_max_acceleration
         self._camera_shape = camera_shape
+        self._vl_shape = (15,15)
         self._camera_keys = camera_keys
         self._state_keys = state_keys
         self._renderer = renderer
@@ -158,6 +179,9 @@ class RLBench:
         self._add_gym_camera()
         self._initialize_frame_stack()
         self._construct_action_and_observation_spaces()
+        # self.graph = None
+        # global_config = get_config(config_path="/home/lenovo/project/CQN_Improve/config.yaml")
+        # self.keypoint_proposer = KeypointProposer(global_config['keypoint_proposer'])
 
     def low_dim_observation_spec(self) -> spaces.Box:
         shape = self.low_dim_observation_space.shape
@@ -172,6 +196,11 @@ class RLBench:
     def rgb_observation_spec(self) -> spaces.Box:
         shape = self.rgb_observation_space.shape
         spec = specs.Array(shape, np.uint8, "rgb_obs")
+        return spec
+
+    def vl_observation_spec(self) -> spaces.Box:
+        shape = self.vl_observation_space.shape
+        spec = specs.Array(shape, np.uint8, "vl_obs")
         return spec
 
     def rgb_raw_observation_spec(self) -> spaces.Box:
@@ -206,14 +235,13 @@ class RLBench:
 
         return TimeStep(
             rgb_obs=obs["rgb_obs"],
+            vl_obs=obs["vl_obs"],
             low_dim_obs=obs["low_dim_obs"],
             step_type=step_type,
             reward=reward,
             discount=discount,
             gripper_pose=obs["gripper_pose"],
             task_low_dim_state=obs["task_low_dim_state"],
-            joint_positions=obs["joint_positions"],
-            gripper_open=obs["gripper_open"],
             demo=0.0,
         )
 
@@ -230,14 +258,13 @@ class RLBench:
 
         return TimeStep(
             rgb_obs=obs["rgb_obs"],
+            vl_obs=obs["vl_obs"],
             low_dim_obs=obs["low_dim_obs"],
             step_type=StepType.FIRST,
             reward=0.0,
             discount=1.0,
             gripper_pose=obs["gripper_pose"],
             task_low_dim_state=obs["task_low_dim_state"],
-            joint_positions=obs["joint_positions"],
-            gripper_open=obs["gripper_open"],
             demo=0.0,
         )
 
@@ -340,6 +367,7 @@ class RLBench:
 
             timestep = ExtendedTimeStep(
                 rgb_obs=obs["rgb_obs"],
+                vl_obs=obs["vl_obs"],
                 low_dim_obs=obs["low_dim_obs"],
                 step_type=step_type,
                 action=action,
@@ -347,8 +375,6 @@ class RLBench:
                 discount=discount,
                 gripper_pose=obs["gripper_pose"],
                 task_low_dim_state=obs["task_low_dim_state"],
-                joint_positions=obs["joint_positions"],
-                gripper_open=obs["gripper_open"],
                 demo=1.0,
             )
             timesteps.append(timestep)
@@ -382,6 +408,7 @@ class RLBench:
         for camera_key in self._camera_keys:
             camera_config = getattr(obs_config, f"{camera_key}_camera")
             camera_config.rgb = True
+            camera_config.mask = True
             camera_config.image_size = self._camera_shape
             camera_config.render_mode = (
                 RenderMode.OPENGL3 if self._renderer == "opengl3" else RenderMode.OPENGL
@@ -427,12 +454,16 @@ class RLBench:
             camera_key: deque([], maxlen=self._frame_stack)
             for camera_key in self._camera_keys
         }
+        self._obs = {
+            camera_key: deque([], maxlen=self._frame_stack)
+            for camera_key in self._camera_keys
+        }
 
     def _construct_action_and_observation_spaces(self):
         # Setup action/observation spaces
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=self._env.action_shape)
         self.low_dim_observation_space = spaces.Box(
-            low=-np.inf, high=np.inf, shape=(8 * self._frame_stack,), dtype=np.float32
+            low=-np.inf, high=np.inf, shape=(15 * self._frame_stack,), dtype=np.float32
         )  # hard-coded: joint: 7, gripper_open: 1
         self.low_dim_raw_observation_space = spaces.Box(
             low=-np.inf, high=np.inf, shape=(8,), dtype=np.float32
@@ -441,6 +472,12 @@ class RLBench:
             low=0,
             high=255,
             shape=(len(self._camera_keys), 3 * self._frame_stack, *self._camera_shape),
+            dtype=np.uint8,
+        )
+        self.vl_observation_space = spaces.Box(
+            low=0,
+            high=255,
+            shape=(len(self._camera_keys), 3 * self._frame_stack, *self._vl_shape),
             dtype=np.uint8,
         )
         self.rgb_raw_observation_space = spaces.Box(
@@ -482,24 +519,109 @@ class RLBench:
         new_action = new_action * 2 - 1  # to [-1, 1]
         return new_action.astype(action.dtype, copy=False)
 
+    def extract_regions_from_mask(self, rgb, mask, output_size = (15,15)):
+        mask_np = mask
+        mask_bin = mask_np > 0
+        labeled_mask, num_features = label(mask_bin)
+
+        results = []
+        for region_id in range(1, num_features + 1):
+            region_mask = (labeled_mask == region_id)
+            ys, xs = np.where(region_mask)
+            y_min,y_max = ys.min(), ys.max()
+            x_min,x_max = xs.min(), xs.max()
+
+            rgb_crop = rgb[y_min:y_max+1, x_min:x_max+1, :].copy()
+
+            region_crop = region_mask[y_min:y_max+1, x_min:x_max+1]
+
+            rgb_crop[~region_crop] = 0
+            rgb_resized = resize(rgb_crop, (output_size[0],output_size[1],3),order = 1, preserve_range = True, anti_aliasing = True)
+            rgb_resized = rgb_resized.transpose(2,0,1)
+            results.append(rgb_resized.astype(np.float32))
+
+        return results
+    
     def _extract_obs(self, obs) -> Dict[str, np.ndarray]:
         obs = vars(obs)
         out = dict()
-
-        # Get low-dimensional state with stacking
-        # for key in self._state_keys:
-        #     print(key)
-        #     print(obs[key])
-        for key in ("joint_positions","gripper_open"):
-            # value = []
-            # for _ in range(self._frame_stack):
-            #     value.append(obs[key])
-            out[key] = np.float32(obs[key])
         low_dim_obs = np.hstack(
-            [obs[key] for key in ("joint_positions","gripper_open")], dtype=np.float32
+            [obs[key] for key in ("joint_positions", "gripper_open", "gripper_pose")], dtype=np.float32
         )
 
-        # gripper_pose = np.hstack(obs["gripper_pose"])
+        if False:
+            temp = obs[f"wrist_rgb"].transpose(0, 1, 2).copy()
+            temp = np.array(temp)
+            if temp.dtype != np.uint8:  # 确保是 uint8
+                temp = (temp * 255).clip(0, 255).astype(np.uint8)
+            
+            ###dino-v2
+            API_TOKEN = "f1a20063f5388be297e707614b6ee9c1"
+            TEXT_PROMPT = "book"
+            OUTPUT_DIR = Path("/home/lenovo/project/CQN_Improve/outputs/open_world_detection")
+            OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+            token = API_TOKEN
+            config = Config(token)
+            client = Client(config)
+            IMG_PATH = "/home/lenovo/project/CQN_Improve/outputs/temp.png"
+            cv2.imwrite("/home/lenovo/project/CQN_Improve/outputs/temp.png", temp)
+            image_url = client.upload_file(IMG_PATH)
+            from dds_cloudapi_sdk.tasks.v2_task import V2Task
+
+            task = V2Task(api_path="/v2/task/dinox/detection", api_body={
+                "model": "DINO-X-1.0",
+                "image": image_url,
+                "prompt": {
+                    "type":"text",
+                    "text":TEXT_PROMPT
+                },
+                "targets": ["bbox"],
+                "bbox_threshold": 0.25,
+                "iou_threshold": 0.8
+            })
+            client.run_task(task)
+            predictions = task.result["objects"]
+            classes = [x.strip().lower() for x in TEXT_PROMPT.split('.') if x]
+            class_name_to_id = {name: id for id, name in enumerate(classes)}
+            class_id_to_name = {id: name for name, id in class_name_to_id.items()}
+            boxes = []
+            confidences = []
+            class_names = []
+            class_ids = []
+            for idx, obj in enumerate(predictions):
+                boxes.append(obj["bbox"])
+                confidences.append(obj["score"])
+                cls_name = obj["category"].lower().strip()
+                class_names.append(cls_name)
+                class_ids.append(class_name_to_id[cls_name])
+            boxes = np.array(boxes)
+            # boxes_stack = np.hstack([boxes[i] for i in range(len(boxes))])
+            class_ids = np.array(class_ids)
+            # low_dim_obs = np.hstack([low_dim_obs, boxes[0]],dtype=np.float32)
+            img = cv2.imread(IMG_PATH)
+            vl_obs = []
+            for box in boxes:
+                crop_img = obs[f"wrist_rgb"].transpose(0, 1, 2).copy()[int(box[0]):int(box[2]), int(box[1]):int(box[3])]
+                new_size = (15, 15)
+                resized_img = cv2.resize(crop_img, new_size, interpolation=cv2.INTER_LINEAR)
+                vl_obs.append(resized_img)
+            if len(vl_obs) == 1:
+                out["vl_obs"] = np.stack(vl_obs,0)
+            detections = sv.Detections(
+                xyxy = boxes,
+                class_id = class_ids,
+            )
+
+            box_annotator = sv.BoxAnnotator()
+            annotated_frame = box_annotator.annotate(scene=img.copy(), detections=detections)
+            cv2.imwrite(os.path.join(OUTPUT_DIR, "annotated_demo_image.jpg"), annotated_frame)
+        # task_low_dim_dict = obs["task_low_dim_state"]
+        # values = list(task_low_dim_dict.values())
+        # values = values[-3:] # hard_code
+        # try:
+        #     low_dim_obs = np.hstack([low_dim_obs, values[1]],dtype=np.float32)
+        # except:
+        #     low_dim_obs = np.hstack([low_dim_obs,[0,0,0]],dtype=np.float32)
 
         if len(self._low_dim_obses) == 0:
             for _ in range(self._frame_stack):
@@ -510,12 +632,24 @@ class RLBench:
 
         # Get rgb observations with stacking
         for camera_key in self._camera_keys:
+            rgb = obs[f"{camera_key}_rgb"].copy()
             pixels = obs[f"{camera_key}_rgb"].transpose(2, 0, 1).copy()
+            mask = obs[f"{camera_key}_mask"]
+            results = self.extract_regions_from_mask(rgb,mask)
+            # for i in range(len(results)):
+            #     result = results[i]
+            #     result_bgr = result.transpose(1, 2, 0)
+            #     cv2.imwrite(f"/home/lenovo/project/CQN_Improve/temp_{i}.jpg",result_bgr )
             if len(self._frames[camera_key]) == 0:
                 for _ in range(self._frame_stack):
                     self._frames[camera_key].append(pixels)
             else:
                 self._frames[camera_key].append(pixels)
+            if len(self._obs[camera_key]) == 0:
+                for _ in range(self._frame_stack):
+                    self._obs[camera_key].append(results[0])
+            else:
+                self._obs[camera_key].append(results[0])
         out["rgb_obs"] = np.stack(
             [
                 np.concatenate(list(self._frames[camera_key]), axis=0)
@@ -523,12 +657,17 @@ class RLBench:
             ],
             0,
         )
+        out["vl_obs"] = np.stack(
+            [
+                np.concatenate(list(self._obs[camera_key]), axis=0)
+                for camera_key in self._camera_keys
+            ],
+            0,
+        )
         gripper_pose = obs["gripper_pose"]
         for _ in range(self._frame_stack):
             self._gripper_pose.append(gripper_pose)
-        out["gripper_pose"] = np.array(list(self._gripper_pose), dtype=np.float32)
-        out["sequence_low_dim"] = np.array(list(self._low_dim_obses), dtype = np.float32)
-        out["gripper_pose"] = np.concatenate(list(self._gripper_pose), axis=0,dtype=np.float32)
+        out["gripper_pose"] = np.array(self._gripper_pose)
         out["task_low_dim_state"] = obs["task_low_dim_state"]
         return out
 

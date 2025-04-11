@@ -49,7 +49,7 @@ class ReplayBufferStorage:
             # print(value)
             # Remove frame stacking
             if spec.name == "low_dim_obs":
-                low_dim = 18  # hard-coded
+                low_dim = 15  # hard-coded
                 value = value[..., -low_dim:]
                 self._current_episode[spec.name].append(value)
                 continue

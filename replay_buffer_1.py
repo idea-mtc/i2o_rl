@@ -49,25 +49,24 @@ class ReplayBufferStorage:
             # print(value)
             # Remove frame stacking
             if spec.name == "low_dim_obs":
-                low_dim = 8  # hard-coded
+                low_dim = 15  # hard-coded
                 value = value[..., -low_dim:]
                 self._current_episode[spec.name].append(value)
                 continue
             elif spec.name == "rgb_obs":
                 rgb_dim = 3  # hard-coded
                 value = value[:, -rgb_dim:]
+            elif spec.name == "vl_obs":
+                rgb_dim = 3  # hard-coded
+                value = value[:, -rgb_dim:]
+                self._current_episode[spec.name].append(value)
+                continue
             if np.isscalar(value):
                 value = np.full(spec.shape, value, spec.dtype)
             if spec.name == "task_low_dim_state":
                 self._current_episode[spec.name].append(value)
                 continue
             if spec.name == "gripper_pose":
-                # value = value[0]
-                value = value[...,-7:]
-                self._current_episode[spec.name].append(value)
-                continue
-            if spec.name == "sequence_low_dim":
-                value = value[0]
                 self._current_episode[spec.name].append(value)
                 continue
             assert spec.shape == value.shape and spec.dtype == value.dtype, (
@@ -232,11 +231,13 @@ class ReplayBuffer(IterableDataset):
 
         # rgb_obs stacking -- channel-wise concat
         rgb_obs = np.concatenate(episode["rgb_obs"][obs_idxs], 1)
+        vl_obs = np.concatenate(episode["vl_obs"][obs_idxs], 1)
         policy_rgb = episode["rgb_obs"][:, :, :, :, :]
         # policy_rgb_obs = np.stack(policy_rgb[obs_idxs], axis=0)
         policy_rgb_obs = policy_rgb[idx]
         policy_next_rgb_obs = np.stack(policy_rgb[obs_next_idxs], axis=0)
         next_rgb_obs = np.concatenate(episode["rgb_obs"][obs_next_idxs], 1)
+        next_vl_obs = np.concatenate(episode["vl_obs"][obs_next_idxs], 1)
         # low_dim_obs stacking -- last-dim-wise concat
         policy_qpos = episode["low_dim_obs"][:, :8]
         # policy_q_pos = np.stack(policy_qpos[obs_idxs], axis=0)
@@ -252,21 +253,27 @@ class ReplayBuffer(IterableDataset):
             task_low_dim_dict = episode["task_low_dim_state"][i]
             values = list(task_low_dim_dict.values())
             # print(values)
-            temp = np.stack(values).flatten()
+            try:
+                temp = np.stack(values).flatten()
+            except:
+                values = [0,0,0]
+                temp = np.stack(values).flatten()
             task_low_dim_state.append(temp)
         next_task_low_dim_state = []
         for i in obs_next_idxs:
             task_low_dim_dict = episode["task_low_dim_state"][i]
             values = list(task_low_dim_dict.values())
-            temp = np.stack(values).flatten()
+            try:
+                temp = np.stack(values).flatten()
+            except:
+                values = [0,0,0]
+                temp = np.stack(values).flatten()
             next_task_low_dim_state.append(temp)
         
         task_low_dim_state = np.stack([task_low_dim_state[i] for i in range(len(task_low_dim_state))], axis = 0)
         next_task_low_dim_state = np.stack([next_task_low_dim_state[i] for i in range(len(next_task_low_dim_state))], axis = 0)
-        gripper_pose = np.concatenate([episode["gripper_pose"][i] for i in obs_idxs], axis=-1)
-        next_gripper_pose = np.concatenate([episode["gripper_pose"][i] for i in obs_next_idxs], axis=-1)
-        # gripper_pose = np.stack([episode["gripper_pose"][i][0] for i in obs_idxs], axis=0)
-        # next_gripper_pose = np.stack([episode["gripper_pose"][i][0] for i in obs_next_idxs], axis=0)
+        gripper_pose = np.stack([episode["gripper_pose"][i][0] for i in obs_idxs], axis=0)
+        next_gripper_pose = np.stack([episode["gripper_pose"][i][0] for i in obs_next_idxs], axis=0)
         action = episode["action"][idx]
         reward = np.zeros_like(episode["reward"][idx])
         discount = np.ones_like(episode["discount"][idx])
@@ -281,6 +288,7 @@ class ReplayBuffer(IterableDataset):
         demo = episode["demo"][idx]
         return (
             rgb_obs,
+            vl_obs,
             low_dim_obs,
             gripper_pose,
             next_gripper_pose,
@@ -290,6 +298,7 @@ class ReplayBuffer(IterableDataset):
             reward,
             discount,
             next_rgb_obs,
+            next_vl_obs,
             next_low_dim_obs,
             demo,
             policy_rgb_obs,

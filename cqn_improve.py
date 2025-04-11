@@ -3,26 +3,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from torch.distributions import Distribution
-
-import torchvision.transforms as transforms
-from models.core import FullyConnectedModule, BaseModule
-import IPython
-e = IPython.embed
 import utils
-from utils import get_config
 from cqn_utils import (
     random_action_if_within_delta,
     zoom_in,
     encode_action,
     decode_action,
-    flatten_time_dim_into_channel_dim,
 )
-
-try:
-    from torchvision.transforms import v2 as tvf
-except Exception:
-    import torchvision.transforms as tvf
 
 
 class RandomShiftsAug(nn.Module):
@@ -107,59 +94,78 @@ class MultiViewCNNEncoder(nn.Module):
         h = torch.cat(hs, -1)
         return h
 
-class ActorNetwork(nn.Module):
-    def __init__(
-        self,
-        repr_dim: int,
-        low_dim: int,
-        action_shape: Tuple,
-        feature_dim: int,
-        hidden_dim: int,
-    ):
+class ObservationCNNEncoder(nn.Module):
+    def __init__(self, obs_shape):
         super().__init__()
-        self._actor_dim = action_shape[0]
-        self.rgb_encoder = nn.Sequential(
-            nn.Linear(repr_dim, feature_dim, bias=False),
-            nn.LayerNorm(feature_dim),
-            nn.Tanh(),
-        )
-        self.low_dim_encoder = nn.Sequential(
-            nn.Linear(low_dim, feature_dim, bias=False),
-            nn.LayerNorm(feature_dim),
-            nn.Tanh(),
-        )
-        self.actor_net = nn.Sequential(
-            nn.Linear(
-                feature_dim * 2, hidden_dim, bias=False
-            ),
-            nn.LayerNorm(hidden_dim),
-            nn.SiLU(),
-            nn.Linear(hidden_dim, hidden_dim, bias=False),
-            nn.LayerNorm(hidden_dim),
-            nn.SiLU(),
-        )
-        self.act_head = nn.Linear(hidden_dim, self._actor_dim)
-        self.adv_output_shape = (self._actor_dim)
+
+        assert len(obs_shape) == 4
+        self.num_views = obs_shape[0]
+        self.repr_dim = self.num_views * 64 * 16 # for 15,15. hard-coded
+
+        self.conv_nets = nn.ModuleList()
+        for _ in range(self.num_views):
+            conv_net = nn.Sequential(
+                nn.Conv2d(obs_shape[1], 32, 3, stride=2, padding=1),
+                ImgChLayerNorm(32),
+                nn.SiLU(),
+                nn.Conv2d(32, 64, 3, stride=2, padding=1),
+                ImgChLayerNorm(64),
+                nn.SiLU(),
+            )
+            self.conv_nets.append(conv_net)
+
         self.apply(utils.weight_init)
-        self.act_head.weight.data.fill_(0.0)
-        self.act_head.bias.data.fill_(0.0)
 
-    def forward(self, rgb_obs: torch.Tensor, low_dim_obs: torch.Tensor) -> Distribution:
-        value_h = torch.cat(
-            [self.rgb_encoder(rgb_obs), self.low_dim_encoder(low_dim_obs)],
-            -1,
-        )
-        # value_x = torch.cat([value_h, prev_action],-1)
-        mu = self.act_head(self.actor_net(value_h)).view(-1, self.adv_output_shape)
-        mu = torch.tanh(mu)
-        dist = utils.TruncatedNormal(mu, torch.zeros_like(mu))
+    def forward(self, obs: torch.Tensor):
+        # obs: [B, V, C, H, W]
+        obs = obs / 255.0 - 0.5
+        hs = []
+        for v in range(self.num_views):
+            h = self.conv_nets[v](obs[:, v])
+            h = h.reshape(h.shape[0], -1)
+            hs.append(h)
+        h = torch.cat(hs, -1)
+        return h
 
-        return dist
+
+
+class CrossAttentionFusion(nn.Module):
+    def __init__(self, feature_dim, num_heads=4):
+        super().__init__()
+        self.query_proj = nn.Linear(feature_dim, feature_dim)  # 投影 Query
+        self.key_proj = nn.Linear(feature_dim, feature_dim)  # 投影 Key
+        self.value_proj = nn.Linear(feature_dim, feature_dim)  # 投影 Value
+        self.attn = nn.MultiheadAttention(embed_dim=feature_dim, num_heads=num_heads)
+
+    def forward(self, low_dim_feat, rgb_feat):
+        """
+        low_dim_feat: (batch_size, feature_dim)  # Query
+        rgb_feat: (batch_size, feature_dim)      # Key & Value
+        """
+        Q = self.query_proj(low_dim_feat).unsqueeze(0)  # (1, batch, feature_dim)
+        K = self.key_proj(rgb_feat).unsqueeze(0)  # (1, batch, feature_dim)
+        V = self.value_proj(rgb_feat).unsqueeze(0)  # (1, batch, feature_dim)
+
+        attn_output, _ = self.attn(Q, K, V)  # (1, batch, feature_dim)
+        return attn_output.squeeze(0)  # (batch, feature_dim)
+
+class BiCrossAttentionFusion(nn.Module):
+    def __init__(self, feature_dim, num_heads=4):
+        super().__init__()
+        self.cross_attn_1 = CrossAttentionFusion(feature_dim, num_heads)
+        self.cross_attn_2 = CrossAttentionFusion(feature_dim, num_heads)
+
+    def forward(self, low_dim_feat, rgb_feat):
+        fused_1 = self.cross_attn_1(low_dim_feat, rgb_feat)  # 状态关注视觉
+        fused_2 = self.cross_attn_2(rgb_feat, low_dim_feat)  # 视觉关注状态
+        return torch.cat([fused_1, fused_2], dim=-1)  # 连接两个特征
+
 
 class C2FCriticNetwork(nn.Module):
     def __init__(
         self,
         repr_dim: int,
+        vl_repr_dim: int,
         low_dim: int,
         action_shape: Tuple,
         feature_dim: int,
@@ -175,7 +181,7 @@ class C2FCriticNetwork(nn.Module):
 
         # Advantage stream in Dueling network
         self.adv_rgb_encoder = nn.Sequential(
-            nn.Linear(repr_dim, feature_dim, bias=False),
+            nn.Linear(repr_dim+vl_repr_dim, feature_dim, bias=False),
             nn.LayerNorm(feature_dim),
             nn.Tanh(),
         )
@@ -184,6 +190,7 @@ class C2FCriticNetwork(nn.Module):
             nn.LayerNorm(feature_dim),
             nn.Tanh(),
         )
+        self.adv_fusion = BiCrossAttentionFusion(feature_dim)
         self.adv_net = nn.Sequential(
             nn.Linear(
                 feature_dim * 2 + self._actor_dim + levels, hidden_dim, bias=False
@@ -199,7 +206,7 @@ class C2FCriticNetwork(nn.Module):
 
         # Value stream in Dueling network
         self.value_rgb_encoder = nn.Sequential(
-            nn.Linear(repr_dim, feature_dim, bias=False),
+            nn.Linear(repr_dim+vl_repr_dim, feature_dim, bias=False),
             nn.LayerNorm(feature_dim),
             nn.Tanh(),
         )
@@ -208,6 +215,7 @@ class C2FCriticNetwork(nn.Module):
             nn.LayerNorm(feature_dim),
             nn.Tanh(),
         )
+        self.value_fusion = BiCrossAttentionFusion(feature_dim)
         self.value_net = nn.Sequential(
             nn.Linear(
                 feature_dim * 2 + self._actor_dim + levels, hidden_dim, bias=False
@@ -248,17 +256,25 @@ class C2FCriticNetwork(nn.Module):
         auto = self.value_rgb_encoder(rgb_obs)
         auto2  = self.value_low_dim_encoder(low_dim_obs)
         value_h = torch.cat(
-            [self.value_rgb_encoder(rgb_obs), self.value_low_dim_encoder(low_dim_obs)],
+            [auto, auto2],
             -1,
         )
+        value_fusion = self.value_fusion(auto, auto2)
+        value_h = value_h + value_fusion
+        
         value_x = torch.cat([value_h, prev_action, level_id], -1)
         values = self.value_head(self.value_net(value_x)).view(
             -1, *self.value_output_shape
         )
 
+        auto3 = self.adv_rgb_encoder(rgb_obs)
+        auto4 = self.adv_low_dim_encoder(low_dim_obs)
+
         adv_h = torch.cat(
-            [self.adv_rgb_encoder(rgb_obs), self.adv_low_dim_encoder(low_dim_obs)], -1
+            [auto3, auto4], -1
         )
+        adv_fusion = self.adv_fusion(auto3, auto4)
+        adv_h = adv_h+adv_fusion
         adv_x = torch.cat([adv_h, prev_action, level_id], -1)
         advs = self.adv_head(self.adv_net(adv_x)).view(-1, *self.adv_output_shape)
 
@@ -271,6 +287,7 @@ class C2FCritic(nn.Module):
         self,
         action_shape: tuple,
         repr_dim: int,
+        vl_repr_dim: int,
         low_dim: int,
         feature_dim: int,
         hidden_dim: int,
@@ -301,6 +318,7 @@ class C2FCritic(nn.Module):
 
         self.network = C2FCriticNetwork(
             repr_dim,
+            vl_repr_dim,
             low_dim,
             action_shape,
             feature_dim,
@@ -503,6 +521,7 @@ class CQNAgent:
     def __init__(
         self,
         rgb_obs_shape,
+        vl_observation_shape,
         low_dim_obs_shape,
         action_shape,
         device,
@@ -515,6 +534,7 @@ class CQNAgent:
         v_min,
         v_max,
         bc_lambda,
+        # sc_lambda, #space constraints and global strategy
         bc_margin,
         critic_lambda,
         critic_target_tau,
@@ -531,16 +551,17 @@ class CQNAgent:
         self.num_expl_steps = num_expl_steps
         self.stddev_schedule = stddev_schedule
         self.bc_lambda = bc_lambda
-        self.actor_grad_clip = 100.0
         # self.sc_lambda = sc_lambda
         self.bc_margin = bc_margin
         self.critic_lambda = critic_lambda
 
         # models
         self.encoder = MultiViewCNNEncoder(rgb_obs_shape).to(device)
+        self.encoder2 = ObservationCNNEncoder(vl_observation_shape).to(device)
         self.critic = C2FCritic(
             action_shape,
             self.encoder.repr_dim,
+            self.encoder2.repr_dim,
             low_dim_obs_shape[-1],
             feature_dim,
             hidden_dim,
@@ -553,6 +574,7 @@ class CQNAgent:
         self.critic_target = C2FCritic(
             action_shape,
             self.encoder.repr_dim,
+            self.encoder2.repr_dim,
             low_dim_obs_shape[-1],
             feature_dim,
             hidden_dim,
@@ -563,17 +585,16 @@ class CQNAgent:
             v_max,
         ).to(device)
         self.critic_target.load_state_dict(self.critic.state_dict())
-        # policy_config = get_config("/home/lenovo/project/CQN_Improve/cfgs/policy_config.yaml")
-        self.actor = ActorNetwork(self.encoder.repr_dim, low_dim_obs_shape[-1], action_shape, feature_dim, hidden_dim).to(device)
+
         # optimizers
         self.encoder_opt = torch.optim.AdamW(
             self.encoder.parameters(), lr=lr, weight_decay=weight_decay
         )
+        self.encoder2_opt = torch.optim.AdamW(
+            self.encoder2.parameters(), lr=lr, weight_decay=weight_decay
+        )
         self.critic_opt = torch.optim.AdamW(
             self.critic.parameters(), lr=lr, weight_decay=weight_decay
-        )
-        self.actor_opt = torch.optim.AdamW(
-            self.actor.parameters(), lr = lr, weight_decay = weight_decay
         )
 
         # data augmentation
@@ -583,18 +604,22 @@ class CQNAgent:
         self.critic_target.eval()
 
         print(self.encoder)
+        print(self.encoder2)
         print(self.critic)
 
     def train(self, training=True):
         self.training = training
         self.encoder.train(training)
+        self.encoder2.train(training)
         self.critic.train(training)
-        self.actor.train(training)
 
-    def act(self, rgb_obs, low_dim_obs, step, eval_mode):
+    def act(self, rgb_obs, vl_obs, low_dim_obs, step, eval_mode):
+        vl_obs = torch.as_tensor(vl_obs,device=self.device).unsqueeze(0)
         rgb_obs = torch.as_tensor(rgb_obs, device=self.device).unsqueeze(0)
         low_dim_obs = torch.as_tensor(low_dim_obs, device=self.device).unsqueeze(0)
         rgb_obs = self.encoder(rgb_obs)
+        vl_obs = self.encoder2(vl_obs)
+        rgb_obs = torch.cat((rgb_obs, vl_obs), dim=1)
         stddev = utils.schedule(self.stddev_schedule, step)
         action, _ = self.critic_target.get_action(
             rgb_obs, low_dim_obs
@@ -609,103 +634,6 @@ class CQNAgent:
                 action.uniform_(-1.0, 1.0)
         action = self.critic.encode_decode_action(action)
         return action.cpu().numpy()[0]
-    
-    def actor_act(self, rgb_obs, low_dim_obs, step, eval_mode=False):
-        rgb_obs = torch.as_tensor(rgb_obs, device=self.device).unsqueeze(0)
-        low_dim_obs = torch.as_tensor(low_dim_obs, device=self.device).unsqueeze(0)
-        rgb_obs = self.encoder(rgb_obs)
-        stddev = utils.schedule(self.stddev_schedule, step)
-        dist = self.actor(rgb_obs, low_dim_obs)
-        if eval_mode:
-            action = dist.mean
-        else:
-            action = dist.sample()
-            if step < self.num_expl_steps:
-                action.uniform_(-1.0, 1.0)
-            # action = dist.sample()
-        return action
-    
-    def _compute_actor_loss(
-        self,
-        rgb_obs,
-        low_dim_obs,
-        action,
-        critic,
-        next_rgb_obs,
-        next_low_dim_obs,
-        reward,
-        discount,
-        critic_target : C2FCritic
-    ):
-        q_probs, q_probs_a, log_q_probs, log_q_probs_a = critic(
-            rgb_obs, low_dim_obs, action
-        )
-        next_action, mets = self.critic.get_action(next_rgb_obs, next_low_dim_obs)
-        with torch.no_grad():
-            target_q_probs_a = critic_target.compute_target_q_dist(
-                next_rgb_obs, next_low_dim_obs, next_action, reward, discount
-            )
-        q_critic_loss = -torch.sum(target_q_probs_a * log_q_probs_a, 3).mean()
-        min_q = q_probs_a.min(-1, keepdim=True)[0]
-        return (-min_q*q_critic_loss).mean()
-
-    def get_bc_loss(self, predicted_action, buffer_action, demos):
-        metrics = dict()
-        bc_loss = 0
-        if demos is not None:
-            # Only apply loss to demo items
-            demos = demos.float().unsqueeze(1)
-            bs = demos.shape[0]
-            if demos.sum() > 0:
-                bc_loss = (
-                    F.mse_loss(
-                        predicted_action.view(bs, -1),
-                        buffer_action.view(bs, -1),
-                        reduction="none",
-                    )
-                    * demos
-                )
-                bc_loss = self.bc_lambda * bc_loss.sum() / demos.sum()
-                if self.use_logger:
-                    metrics["actor_bc_loss"] = bc_loss.item()
-            if self.use_logger:
-                metrics["ratio_of_demos"] = demos.mean().item()
-        return metrics, bc_loss
-
-    def update_actor(
-        self,
-        rgb_obs,
-        low_dim_obs,
-        action,
-        reward,
-        discount,
-        next_rgb_obs,
-        next_low_dim_obs,
-        demos,
-        steps,
-    ):
-        metrics = dict()
-        dist = self.actor(rgb_obs, low_dim_obs)
-        predicted_action = dist.sample()
-        log_prob = dist.log_prob(action).sum(-1, keepdim=True)
-        base_actor_loss = self._compute_actor_loss(rgb_obs, low_dim_obs, predicted_action, self.critic, next_rgb_obs, next_low_dim_obs,reward, discount, self.critic_target)
-        bc_metrics, bc_loss = self.get_bc_loss(dist.mean, action, demos)
-        metrics.update(bc_metrics)
-        actor_loss = base_actor_loss+bc_loss
-        if self.actor_grad_clip:
-            nn.utils.clip_grad_norm_(self.actor.parameters(), self.actor_grad_clip)
-        self.actor_opt.zero_grad(set_to_none=True)
-        actor_loss.backward(retain_graph=True)
-        self.actor_opt.step()
-
-        if self.use_logger:
-            metrics["mean_act"] = dist.mean.mean().item()
-            metrics["actor_loss"] = actor_loss.item()
-            metrics["actor_logprob"] = log_prob.mean().item()
-            metrics["actor_ent"] = dist.entropy().sum(dim=-1).mean().item()
-        return metrics
-
-
 
     def update_critic(
         self,
@@ -724,6 +652,11 @@ class CQNAgent:
         step,
     ):
         metrics = dict()
+        # print("task_low_dim_state:{}".format(task_low_dim_state))
+        # print("task_low_dim_state:{}".format(task_low_dim_state.shape))
+        # pass
+        # print("gripper_pose:{}".format(gripper_pose.shape))
+        # print("next_gripper_pose:{}".format(next_gripper_pose.shape))
         with torch.no_grad():
             next_action, mets = self.critic.get_action(next_rgb_obs, next_low_dim_obs)
             target_q_probs_a = self.critic_target.compute_target_q_dist(
@@ -731,6 +664,10 @@ class CQNAgent:
             )
             if self.use_logger:
                 metrics.update(**mets)
+        #     print("next_actiom:{}".format(next_action.shape))
+        #     print("action{}".format(action))
+
+        # print("rgb_obs_shape:{}".format(rgb_obs.shape))
 
         # Cross entropy loss for C51
         q_probs, q_probs_a, log_q_probs, log_q_probs_a = self.critic(
@@ -756,6 +693,14 @@ class CQNAgent:
                 metrics["ratio_of_demos"] = demos.mean().item()
 
             if torch.sum(demos) > 0:
+                stddev = utils.schedule(self.stddev_schedule, step)
+                current_action, _ = self.critic.get_action(rgb_obs, low_dim_obs)
+                stddev = torch.ones_like(current_action) * stddev
+                dist = utils.TruncatedNormal(current_action, stddev)
+                current_action = dist.mean
+                current_action = self.critic.encode_decode_action(current_action)
+                bc_loss = F.l1_loss(current_action, action, reduction='none')
+                bc_loss = bc_loss.mean(dim=-1)
                 # q_probs: [B, L, D, bins, atoms], q_probs_a: [B, L, D, atoms]
                 q_probs_cdf = torch.cumsum(q_probs, -1)
                 q_probs_a_cdf = torch.cumsum(q_probs_a, -1)
@@ -767,9 +712,11 @@ class CQNAgent:
                     .mean([-1, -2, -3])
                 )
                 bc_fosd_loss = (bc_fosd_loss * demos).sum() / demos.sum()
-                critic_loss = critic_loss + self.bc_lambda * bc_fosd_loss
+                bc_loss = (bc_loss * demos).sum()/demos.sum()
+                critic_loss = critic_loss + self.bc_lambda * bc_fosd_loss + 0.5 * bc_loss
                 if self.use_logger:
                     metrics["bc_fosd_loss"] = bc_fosd_loss.item()
+                    metrics["bc_loss"] = bc_loss.item()
 
                 if self.bc_margin > 0:
                     qs = (q_probs * self.critic.support.expand_as(q_probs)).sum(-1)
@@ -785,7 +732,7 @@ class CQNAgent:
                         metrics["bc_margin_loss"] = margin_loss.item()
         self.encoder_opt.zero_grad(set_to_none=True)
         self.critic_opt.zero_grad(set_to_none=True)
-        critic_loss.backward(retain_graph=True)
+        critic_loss.backward()
         self.critic_opt.step()
         self.encoder_opt.step()
 
@@ -800,6 +747,7 @@ class CQNAgent:
         # 其余数据转换为 Tensor
         (
             rgb_obs,
+            vl_obs,
             low_dim_obs,
             gripper_pose,
             next_gripper_pose,
@@ -809,6 +757,7 @@ class CQNAgent:
             reward,
             discount,
             next_rgb_obs,
+            next_vl_obs,
             next_low_dim_obs,
             demos,
             policy_rgb_obs,
@@ -817,21 +766,6 @@ class CQNAgent:
             policy_next_q_pos,
         ) = utils.to_torch(batch, self.device)
 
-        # if torch.sum(demos) > 0:
-        #     new_demos = demos.squeeze(1)
-        #     image = policy_rgb_obs.float()
-        #     image = image[new_demos.bool()]
-            
-        #     seq_action = action[new_demos.bool()]
-        #     seq_action = seq_action.unsqueeze(1)
-        #     is_pad = seq_action.sum(axis=-1) == 0
-        #     policy_q_pos = policy_q_pos[new_demos.bool()]
-        #     loss_dict = self.actor(policy_q_pos, image, seq_action, is_pad)
-        #     self.actor_opt.zero_grad(set_to_none=True)
-        #     loss_dict["loss"].backward()
-        #     metrics["actor_loss"] = loss_dict["loss"].item()
-        #     self.actor_opt.step()
-        
         # augment
         rgb_obs = rgb_obs.float()
         next_rgb_obs = next_rgb_obs.float()
@@ -841,14 +775,20 @@ class CQNAgent:
         next_rgb_obs = torch.stack(
             [self.aug(next_rgb_obs[:, v]) for v in range(next_rgb_obs.shape[1])], 1
         )
+        vl_obs = vl_obs.float()
+        next_vl_obs = next_vl_obs.float()
         # encode
         rgb_obs = self.encoder(rgb_obs)
+        vl_obs = self.encoder2(vl_obs)
         with torch.no_grad():
             next_rgb_obs = self.encoder(next_rgb_obs)
+            next_vl_obs = self.encoder2(next_vl_obs)
 
         if self.use_logger:
             metrics["batch_reward"] = reward.mean().item()
 
+        rgb_obs = torch.cat((rgb_obs,vl_obs),dim=1)
+        next_rgb_obs = torch.cat((next_rgb_obs, next_vl_obs), dim = 1)
         # update critic
         metrics.update(
             self.update_critic(
@@ -868,9 +808,6 @@ class CQNAgent:
             )
         )
 
-        metrics.update(
-            self.update_actor(rgb_obs,low_dim_obs,action,reward,discount,next_rgb_obs,next_low_dim_obs,demos,step)
-        )
         # update critic target
         utils.soft_update_params(
             self.critic, self.critic_target, self.critic_target_tau
