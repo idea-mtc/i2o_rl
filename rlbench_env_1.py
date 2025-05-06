@@ -174,6 +174,7 @@ class RLBench:
         self._state_keys = state_keys
         self._renderer = renderer
         self._render_mode = render_mode
+        self._init_flag = False
 
         self._launch()
         self._add_gym_camera()
@@ -428,6 +429,7 @@ class RLBench:
             obs_config=obs_config,
             dataset_root=self._dataset_root,
             headless=True,
+#            shaped_rewards=True,
         )
         self._env.launch()
         self.task = self._env.get_task(task_class)
@@ -632,10 +634,7 @@ class RLBench:
 
         # Get rgb observations with stacking
         for camera_key in self._camera_keys:
-            rgb = obs[f"{camera_key}_rgb"].copy()
             pixels = obs[f"{camera_key}_rgb"].transpose(2, 0, 1).copy()
-            mask = obs[f"{camera_key}_mask"]
-            results = self.extract_regions_from_mask(rgb,mask)
             # for i in range(len(results)):
             #     result = results[i]
             #     result_bgr = result.transpose(1, 2, 0)
@@ -645,11 +644,16 @@ class RLBench:
                     self._frames[camera_key].append(pixels)
             else:
                 self._frames[camera_key].append(pixels)
-            if len(self._obs[camera_key]) == 0:
-                for _ in range(self._frame_stack):
+            if self._init_flag == False:
+                rgb = obs[f"{camera_key}_rgb"].copy()
+                mask = obs[f"{camera_key}_mask"]
+                results = self.extract_regions_from_mask(rgb,mask)
+                if len(self._obs[camera_key]) == 0:
+                    for _ in range(self._frame_stack):
+                        self._obs[camera_key].append(results[0])
+                else:
                     self._obs[camera_key].append(results[0])
-            else:
-                self._obs[camera_key].append(results[0])
+            self._init_flag == True
         out["rgb_obs"] = np.stack(
             [
                 np.concatenate(list(self._frames[camera_key]), axis=0)

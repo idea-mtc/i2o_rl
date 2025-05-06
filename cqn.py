@@ -626,6 +626,10 @@ class CQNAgent:
         # next_q_probs, next_q_probs_a, next_log_q_probs, next_log_q_probs_a = self.critic(
         #     rgb_obs, low_dim_obs, action
         # )
+        # mask = demos.float().squeeze(1)  # [B,] 
+        # mask = (1 - mask).view(-1, 1, 1, 1).float()
+        # masked_loss = -torch.sum(target_q_probs_a * log_q_probs_a*mask, 3).mean()
+        # q_critic_loss = masked_loss.sum() / mask.sum().clamp(min=1.0)
         q_critic_loss = -torch.sum(target_q_probs_a * log_q_probs_a, 3).mean()
         critic_loss = self.critic_lambda * q_critic_loss
 
@@ -638,7 +642,6 @@ class CQNAgent:
         if self.bc_lambda > 0.0:
             qs = None
             demos = demos.float().squeeze(1)  # [B,]
-            # print(demos)
             if self.use_logger:
                 metrics["ratio_of_demos"] = demos.mean().item()
 

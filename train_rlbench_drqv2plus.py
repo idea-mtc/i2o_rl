@@ -7,6 +7,7 @@ import os
 
 os.environ["MKL_SERVICE_FORCE_INTEL"] = "1"
 os.environ["MUJOCO_GL"] = "egl"
+os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = os.path.expanduser('~/CoppeliaSim')
 
 from pathlib import Path
 

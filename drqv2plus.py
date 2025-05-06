@@ -479,17 +479,26 @@ class DrQV2Agent:
 
         if step % self.update_every_steps != 0:
             return metrics
-
+        
         batch = next(replay_iter)
+        # 其余数据转换为 Tensor
         (
             rgb_obs,
             low_dim_obs,
+            gripper_pose,
+            next_gripper_pose,
+            task_low_dim_state,
+            next_task_low_dim_state,
             action,
             reward,
             discount,
             next_rgb_obs,
             next_low_dim_obs,
             demos,
+            policy_rgb_obs,
+            policy_next_rgb_obs,
+            policy_q_pos,
+            policy_next_q_pos,
         ) = utils.to_torch(batch, self.device)
 
         # augment

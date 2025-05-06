@@ -415,6 +415,7 @@ class RLBench:
             obs_config=obs_config,
             dataset_root=self._dataset_root,
             headless=True,
+            # shaped_rewards=True,
         )
         self._env.launch()
         self.task = self._env.get_task(task_class)

@@ -163,7 +163,7 @@ class Workspace:
 
     def eval(self):
         """We use train env for evaluation, because it's convenient"""
-        step, episode, total_reward = 0, 0, 0
+        step, episode, total_reward, success_num, el = 0, 0, 0, 0, 0
         eval_until_episode = utils.Until(self.cfg.num_eval_episodes)
 
         while eval_until_episode(episode):
@@ -182,12 +182,17 @@ class Workspace:
                 self.video_recorder.record(self.train_env)
                 total_reward += time_step.reward
                 step += 1
-
+                el+=1
+            # if time_step.
+            if (el < 175) :
+                success_num += 1
+            el = 0
             episode += 1
             self.video_recorder.save(f"{self.global_frame}.mp4")
 
         with self.logger.log_and_dump_ctx(self.global_frame, ty="eval") as log:
             log("episode_reward", total_reward / episode)
+            # log("episode_reward", success_num / episode)
             log("episode_length", step * self.cfg.action_repeat / episode)
             log("episode", self.global_episode)
             log("step", self.global_step)
@@ -304,6 +309,7 @@ class Workspace:
 
     def load_snapshot(self):
         snapshot = self.work_dir / "snapshot.pt"
+        # snapshot = Path("/home/lenovo/project/CQN_Improve/exp_local/cqn_pixel_rlbench/20250411173345_take_lid_96/snapshot.pt")
         with snapshot.open("rb") as f:
             payload = torch.load(f)
         for k, v in payload.items():
@@ -317,6 +323,7 @@ def main(cfg):
     root_dir = Path.cwd()
     workspace = W(cfg)
     snapshot = root_dir / "snapshot.pt"
+    # snapshot = Path("/home/lenovo/project/CQN_Improve/exp_local/cqn_pixel_rlbench/20250411173345_take_lid_96/snapshot.pt")
     if snapshot.exists():
         print(f"resuming: {snapshot}")
         workspace.load_snapshot()

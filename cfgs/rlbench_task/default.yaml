@@ -1,4 +1,4 @@
-dataset_root: '/home/lenovo/project/CQN_Improve/data/put_book'
+dataset_root: '/home/lenovo/project/CQN_Improve/data/shoe'
 camera_shape: [84,84]
 camera_keys: [front,wrist,left_shoulder,right_shoulder]
 state_keys: [joint_positions,gripper_open,gripper_pose,task_low_dim_state]

@@ -1,0 +1,6 @@
+defaults:
+  - default
+  - _self_
+
+task_name: take_umbrella_out_of_umbrella_stand
+episode_length: 125

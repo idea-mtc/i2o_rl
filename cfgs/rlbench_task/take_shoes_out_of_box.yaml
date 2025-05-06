@@ -1,0 +1,6 @@
+defaults:
+  - default
+  - _self_
+
+task_name: take_shoes_out_of_box
+episode_length: 350

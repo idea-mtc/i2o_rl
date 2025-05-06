@@ -107,7 +107,8 @@ class ReplayBufferStorage:
 
     def _check_if_successful(self, episode):
         reward = episode["reward"]
-        return np.isclose(reward[-1], 1.0)
+        # return np.isclose(reward[-1], 1.0)
+        return reward[-1] > 0.9
 
     def _preload(self):
         self._num_episodes = 0
@@ -242,31 +243,33 @@ class ReplayBuffer(IterableDataset):
         # gripper_pose = np.concatenate(episode["gripper_pose"][obs_idxs])
         # next_gripper_pose = np.concatenate(episode["gripper_pose"][obs_next_idxs])
         task_low_dim_state = []
-        for i in obs_idxs:
-            task_low_dim_dict = episode["task_low_dim_state"][i]
-            values = list(task_low_dim_dict.values())
-            # print(values)
-            try:
-                temp = np.stack(values).flatten()
-            except:
-                values = [0,0,0]
-                temp = np.stack(values).flatten()
-            task_low_dim_state.append(temp)
+        # for i in obs_idxs:
+        #     task_low_dim_dict = episode["task_low_dim_state"][i]
+        #     values = list(task_low_dim_dict.values())
+        #     # print(values)
+        #     try:
+        #         temp = np.stack(values).flatten()
+        #     except:
+        #         values = [0,0,0]
+        #         temp = np.stack(values).flatten()
+        #     task_low_dim_state.append(temp)
         next_task_low_dim_state = []
-        for i in obs_next_idxs:
-            task_low_dim_dict = episode["task_low_dim_state"][i]
-            values = list(task_low_dim_dict.values())
-            try:
-                temp = np.stack(values).flatten()
-            except:
-                values = [0,0,0]
-                temp = np.stack(values).flatten()
-            next_task_low_dim_state.append(temp)
+        # for i in obs_next_idxs:
+        #     task_low_dim_dict = episode["task_low_dim_state"][i]
+        #     values = list(task_low_dim_dict.values())
+        #     try:
+        #         temp = np.stack(values).flatten()
+        #     except:
+        #         values = [0,0,0]
+        #         temp = np.stack(values).flatten()
+        #     next_task_low_dim_state.append(temp)
         
-        task_low_dim_state = np.stack([task_low_dim_state[i] for i in range(len(task_low_dim_state))], axis = 0)
-        next_task_low_dim_state = np.stack([next_task_low_dim_state[i] for i in range(len(next_task_low_dim_state))], axis = 0)
-        gripper_pose = np.stack([episode["gripper_pose"][i][0] for i in obs_idxs], axis=0)
-        next_gripper_pose = np.stack([episode["gripper_pose"][i][0] for i in obs_next_idxs], axis=0)
+        # task_low_dim_state = np.stack([task_low_dim_state[i] for i in range(len(task_low_dim_state))], axis = 0)
+        # next_task_low_dim_state = np.stack([next_task_low_dim_state[i] for i in range(len(next_task_low_dim_state))], axis = 0)
+        # gripper_pose = np.stack([episode["gripper_pose"][i][0] for i in obs_idxs], axis=0)
+        # next_gripper_pose = np.stack([episode["gripper_pose"][i][0] for i in obs_next_idxs], axis=0)
+        gripper_pose = []
+        next_gripper_pose = []
         action = episode["action"][idx]
         reward = np.zeros_like(episode["reward"][idx])
         discount = np.ones_like(episode["discount"][idx])
