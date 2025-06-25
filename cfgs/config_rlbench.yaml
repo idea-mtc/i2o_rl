@@ -40,7 +40,7 @@ arm_max_velocity: 2.0
 arm_max_acceleration: 8.0
 
 agent:
-  _target_: cqn.CQNAgent
+  _target_: i2o_rl.I2OAgent
   # _target_: drqv2plus.DrQV2Agent
   rgb_obs_shape: ??? # to be specified later
   # vl_observation_shape: ??? # to be specified later

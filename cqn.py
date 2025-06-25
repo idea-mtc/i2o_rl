@@ -94,37 +94,6 @@ class MultiViewCNNEncoder(nn.Module):
         h = torch.cat(hs, -1)
         return h
 
-class CrossAttentionFusion(nn.Module):
-    def __init__(self, feature_dim, num_heads=4):
-        super().__init__()
-        self.query_proj = nn.Linear(feature_dim, feature_dim)  # 投影 Query
-        self.key_proj = nn.Linear(feature_dim, feature_dim)  # 投影 Key
-        self.value_proj = nn.Linear(feature_dim, feature_dim)  # 投影 Value
-        self.attn = nn.MultiheadAttention(embed_dim=feature_dim, num_heads=num_heads)
-
-    def forward(self, low_dim_feat, rgb_feat):
-        """
-        low_dim_feat: (batch_size, feature_dim)  # Query
-        rgb_feat: (batch_size, feature_dim)      # Key & Value
-        """
-        Q = self.query_proj(low_dim_feat).unsqueeze(0)  # (1, batch, feature_dim)
-        K = self.key_proj(rgb_feat).unsqueeze(0)  # (1, batch, feature_dim)
-        V = self.value_proj(rgb_feat).unsqueeze(0)  # (1, batch, feature_dim)
-
-        attn_output, _ = self.attn(Q, K, V)  # (1, batch, feature_dim)
-        return attn_output.squeeze(0)  # (batch, feature_dim)
-
-class BiCrossAttentionFusion(nn.Module):
-    def __init__(self, feature_dim, num_heads=4):
-        super().__init__()
-        self.cross_attn_1 = CrossAttentionFusion(feature_dim, num_heads)
-        self.cross_attn_2 = CrossAttentionFusion(feature_dim, num_heads)
-
-    def forward(self, low_dim_feat, rgb_feat):
-        fused_1 = self.cross_attn_1(low_dim_feat, rgb_feat)  # 状态关注视觉
-        fused_2 = self.cross_attn_2(rgb_feat, low_dim_feat)  # 视觉关注状态
-        return torch.cat([fused_1, fused_2], dim=-1)  # 连接两个特征
-
 
 class C2FCriticNetwork(nn.Module):
     def __init__(
@@ -154,7 +123,6 @@ class C2FCriticNetwork(nn.Module):
             nn.LayerNorm(feature_dim),
             nn.Tanh(),
         )
-        self.adv_fusion = BiCrossAttentionFusion(feature_dim)
         self.adv_net = nn.Sequential(
             nn.Linear(
                 feature_dim * 2 + self._actor_dim + levels, hidden_dim, bias=False
@@ -179,7 +147,6 @@ class C2FCriticNetwork(nn.Module):
             nn.LayerNorm(feature_dim),
             nn.Tanh(),
         )
-        self.value_fusion = BiCrossAttentionFusion(feature_dim)
         self.value_net = nn.Sequential(
             nn.Linear(
                 feature_dim * 2 + self._actor_dim + levels, hidden_dim, bias=False
@@ -217,28 +184,19 @@ class C2FCriticNetwork(nn.Module):
             .unsqueeze(0)
             .repeat_interleave(rgb_obs.shape[0], 0)
         )
-        auto = self.value_rgb_encoder(rgb_obs)
-        auto2  = self.value_low_dim_encoder(low_dim_obs)
+
         value_h = torch.cat(
-            [auto, auto2],
+            [self.value_rgb_encoder(rgb_obs), self.value_low_dim_encoder(low_dim_obs)],
             -1,
         )
-        value_fusion = self.value_fusion(auto, auto2)
-        value_h = value_h + value_fusion
-        
         value_x = torch.cat([value_h, prev_action, level_id], -1)
         values = self.value_head(self.value_net(value_x)).view(
             -1, *self.value_output_shape
         )
 
-        auto3 = self.adv_rgb_encoder(rgb_obs)
-        auto4 = self.adv_low_dim_encoder(low_dim_obs)
-
         adv_h = torch.cat(
-            [auto3, auto4], -1
+            [self.adv_rgb_encoder(rgb_obs), self.adv_low_dim_encoder(low_dim_obs)], -1
         )
-        adv_fusion = self.adv_fusion(auto3, auto4)
-        adv_h = adv_h+adv_fusion
         adv_x = torch.cat([adv_h, prev_action, level_id], -1)
         advs = self.adv_head(self.adv_net(adv_x)).view(-1, *self.adv_output_shape)
 
@@ -495,7 +453,6 @@ class CQNAgent:
         v_min,
         v_max,
         bc_lambda,
-        # sc_lambda, #space constraints and global strategy
         bc_margin,
         critic_lambda,
         critic_target_tau,
@@ -512,7 +469,6 @@ class CQNAgent:
         self.num_expl_steps = num_expl_steps
         self.stddev_schedule = stddev_schedule
         self.bc_lambda = bc_lambda
-        # self.sc_lambda = sc_lambda
         self.bc_margin = bc_margin
         self.critic_lambda = critic_lambda
 
@@ -589,24 +545,15 @@ class CQNAgent:
         self,
         rgb_obs,
         low_dim_obs,
-        gripper_pose,
-        next_gripper_pose,
-        task_low_dim_state,
-        next_task_low_dim_state,
         action,
         reward,
         discount,
         next_rgb_obs,
         next_low_dim_obs,
         demos,
-        step,
     ):
         metrics = dict()
-        # print("task_low_dim_state:{}".format(task_low_dim_state))
-        # print("task_low_dim_state:{}".format(task_low_dim_state.shape))
-        # pass
-        # print("gripper_pose:{}".format(gripper_pose.shape))
-        # print("next_gripper_pose:{}".format(next_gripper_pose.shape))
+
         with torch.no_grad():
             next_action, mets = self.critic.get_action(next_rgb_obs, next_low_dim_obs)
             target_q_probs_a = self.critic_target.compute_target_q_dist(
@@ -614,30 +561,16 @@ class CQNAgent:
             )
             if self.use_logger:
                 metrics.update(**mets)
-        #     print("next_actiom:{}".format(next_action.shape))
-        #     print("action{}".format(action))
-
-        # print("rgb_obs_shape:{}".format(rgb_obs.shape))
 
         # Cross entropy loss for C51
         q_probs, q_probs_a, log_q_probs, log_q_probs_a = self.critic(
             rgb_obs, low_dim_obs, action
         )
-        # next_q_probs, next_q_probs_a, next_log_q_probs, next_log_q_probs_a = self.critic(
-        #     rgb_obs, low_dim_obs, action
-        # )
-        # mask = demos.float().squeeze(1)  # [B,] 
-        # mask = (1 - mask).view(-1, 1, 1, 1).float()
-        # masked_loss = -torch.sum(target_q_probs_a * log_q_probs_a*mask, 3).mean()
-        # q_critic_loss = masked_loss.sum() / mask.sum().clamp(min=1.0)
         q_critic_loss = -torch.sum(target_q_probs_a * log_q_probs_a, 3).mean()
         critic_loss = self.critic_lambda * q_critic_loss
 
         if self.use_logger:
             metrics["q_critic_loss"] = q_critic_loss.item()
-
-        # if self.sc_lambda > 0.0:
-        #     next_action
 
         if self.bc_lambda > 0.0:
             qs = None
@@ -646,14 +579,6 @@ class CQNAgent:
                 metrics["ratio_of_demos"] = demos.mean().item()
 
             if torch.sum(demos) > 0:
-                stddev = utils.schedule(self.stddev_schedule, step)
-                current_action, _ = self.critic.get_action(rgb_obs, low_dim_obs)
-                stddev = torch.ones_like(current_action) * stddev
-                dist = utils.TruncatedNormal(current_action, stddev)
-                current_action = dist.mean
-                current_action = self.critic.encode_decode_action(current_action)
-                bc_loss = F.l1_loss(current_action, action, reduction='none')
-                bc_loss = bc_loss.mean(dim=-1)
                 # q_probs: [B, L, D, bins, atoms], q_probs_a: [B, L, D, atoms]
                 q_probs_cdf = torch.cumsum(q_probs, -1)
                 q_probs_a_cdf = torch.cumsum(q_probs_a, -1)
@@ -665,11 +590,9 @@ class CQNAgent:
                     .mean([-1, -2, -3])
                 )
                 bc_fosd_loss = (bc_fosd_loss * demos).sum() / demos.sum()
-                bc_loss = (bc_loss * demos).sum()/demos.sum()
-                critic_loss = critic_loss + self.bc_lambda * bc_fosd_loss + 0.5 * bc_loss
+                critic_loss = critic_loss + self.bc_lambda * bc_fosd_loss
                 if self.use_logger:
                     metrics["bc_fosd_loss"] = bc_fosd_loss.item()
-                    metrics["bc_loss"] = bc_loss.item()
 
                 if self.bc_margin > 0:
                     qs = (q_probs * self.critic.support.expand_as(q_probs)).sum(-1)
@@ -684,53 +607,6 @@ class CQNAgent:
                     if self.use_logger:
                         metrics["bc_margin_loss"] = margin_loss.item()
 
-        # # 提取关键位置信息
-        # door_frame_pos = task_low_dim_state[:, :, :3]  
-        # door_handle_pos = task_low_dim_state[:, :, 3:]  
-        # next_door_handle_pos = next_task_low_dim_state[:, :, 3:]  
-        # grasp_pose = gripper_pose[:, :, :3]  
-        # next_grasp_pose = next_gripper_pose[:, :, :3]  
-
-        # # 计算 **相对变化率** 而不是固定阈值
-        # handle_pos_change = next_door_handle_pos - door_handle_pos  
-        # handle_change_rate = torch.norm(handle_pos_change, dim=-1) / (torch.norm(door_handle_pos, dim=-1) + 1e-6)  
-
-        # grasp_to_handle_dist = torch.norm(door_handle_pos - grasp_pose, dim=-1)  
-        # next_grasp_to_handle_dist = torch.norm(next_door_handle_pos - next_grasp_pose, dim=-1)  
-        # approach_rate = (grasp_to_handle_dist - next_grasp_to_handle_dist) 
-
-        # # 训练阶段随 step 变化的动态权重
-        # max_steps = 30250  
-        # progress = step / max_steps  
-        # approach_weight = 1.0 - torch.sigmoid(torch.tensor((progress - 0.3) * 10))  # 训练前30%主要关注接近
-        # grasp_weight = torch.sigmoid(torch.tensor((progress - 0.5) * 10))  # 训练到50%后开始注重抓取
-        # push_weight = torch.sigmoid(torch.tensor((progress - 0.7) * 10))  # 训练到70%后主要关注推门
-
-        # # 根据动态权重判断任务阶段
-        # approach_phase = approach_rate > 0.05  
-        # grasp_phase = grasp_to_handle_dist < (0.2 + 0.5 * (1 - progress))  # 初期要求宽松，后期要求精确
-        # push_phase = handle_change_rate > 0.05  
-
-        # final_phase = (approach_phase * approach_weight) + (grasp_phase * grasp_weight) + (push_phase * push_weight)
-
-        # # 计算 task_fosd_loss
-        # q_probs_cdf = torch.cumsum(q_probs, -1)
-        # q_probs_a_cdf = torch.cumsum(q_probs_a, -1)
-
-        # demos_inverse = 1 - demos
-        # task_fosd_loss = (
-        #     (q_probs_a_cdf.unsqueeze(-2) - q_probs_cdf)
-        #     .clamp(min=0)
-        #     .sum(-1)
-        #     .mean([-1, -2, -3])
-        # )
-        # task_fosd_loss = ((1 - final_phase.float()) * task_fosd_loss * demos_inverse).sum() / (demos_inverse.sum() + 1)
-        # critic_loss = critic_loss + task_fosd_loss
-
-        # if self.use_logger:
-        #     metrics["task_fosd_loss"] = task_fosd_loss.item()
-        #     # metrics["weighted_task_loss"] = weighted_task_loss.item()
-
         # optimize encoder and critic
         self.encoder_opt.zero_grad(set_to_none=True)
         self.critic_opt.zero_grad(set_to_none=True)
@@ -744,7 +620,8 @@ class CQNAgent:
         metrics = dict()
 
         if step % self.update_every_steps != 0:
-            return metrics        
+            return metrics
+
         batch = next(replay_iter)
         # 其余数据转换为 Tensor
         (
@@ -788,17 +665,12 @@ class CQNAgent:
             self.update_critic(
                 rgb_obs,
                 low_dim_obs,
-                gripper_pose,
-                next_gripper_pose,
-                task_low_dim_state,
-                next_task_low_dim_state,
                 action,
                 reward,
                 discount,
                 next_rgb_obs,
                 next_low_dim_obs,
                 demos,
-                step,
             )
         )
 

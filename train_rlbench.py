@@ -1,6 +1,6 @@
 import logging
 import warnings
-from i2o_rl import CQNAgent
+from i2o_rl import I2OAgent
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 

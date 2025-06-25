@@ -1,4 +1,4 @@
-name: cqn
+name: i2o
 channels:
   - defaults
 dependencies:
