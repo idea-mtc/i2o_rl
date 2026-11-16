@@ -1,171 +1,67 @@
-# Lid imitation repair
+# 锅盖模仿学习修复记录
 
-The old RL run and its watchdog were intentionally stopped on 2026-11-12 at
-approximately online step 6720 (latest periodic checkpoint may be earlier).
-`outputs/i2o_panda/WATCHDOG_PAUSE` blocks automatic recovery of that experiment.
+旧 RL 实验及其监控器于 2026-11-12 在线约第 6720 步主动停止，最新周期检查点可能更早。`outputs/i2o_panda/WATCHDOG_PAUSE` 阻止该实验自动恢复。本文保留当时各阶段的验证状态，不代表当前仍在运行。
 
-The diagnostic showed two independent problems: bounded C51 Q scores with beta1
-soft action extraction shrink amplitudes; a time-scripted expert has ambiguous
-stationary observations at phase boundaries. Hard action extraction reduced
-teacher-forced error but still stalled before descent. A new closed-loop imitation
-experiment must pass before resuming online RL.
+诊断发现两个独立问题：有界 C51 Q 值配合 beta=1 的软动作提取会压缩动作幅度；按时间编排的专家在阶段边界可能出现相同静止观测对应不同动作的歧义。硬动作提取降低了教师强制输入下的误差，但闭环执行仍在下降前停住。因此恢复在线 RL 前必须通过新的闭环模仿实验。
 
-The repair is an explicit engineering variant, not the original paper setup:
+该修复是明确的工程变体，不是论文原设置：
 
-- `phase_clock.py` appends five phase indicators and local phase progress, computed
-  solely from the observable control step and expert schedule 35/40/25/45/35.
-  State shape changes from 120 to 126. No object coordinates, IK result or expert
-  action is supplied to the policy. The network still predicts all eight actions.
-  This schedule is specific to the fixed-duration task; performance under altered
-  speed, disturbances or delays requires additional validation.
-- SoftArgmax beta increases to 5. Optional differentiable endpoint rescaling maps
-  outermost refined bin centers from +/-0.992 to the normalized actuator range.
-  Existing models retain default beta1/no rescaling unless explicitly configured.
-  Rescaling preserves differentiability and bounds; it does not clip gradients.
-- `repair_imitation.py` initializes from the step5000 visual/Q weights, zero-extends
-  the state projection for the new clock features, and uses fresh optimizers.
-  Training is pure MSE, phase-balanced, batch128, lr5e-5. Existing 100 episodes are
-  reused without relabeling executed actions. Both training and inference apply
-  the same soft-action decoding. Target critic is synchronized before evaluation.
-- Every 500 updates, evaluate three new scenes. Once 3/3 succeed, evaluate 20
-  unseen seeds 300000..300019 and record four-view videos and per-step actions.
-  `validate_imitation_gate.py` independently checks the final 30 control steps
-  of all 20 successful trajectories: lift>.15m, XY offset<.05m, knob/TCP<.05m,
-  fingers<.025m and relative grasp motion<.015m. It hashes the validated checkpoint.
+- `phase_clock.py` 根据可观测控制步及专家时序 35/40/25/45/35，增加五个阶段指示和阶段内进度。状态维度从 120 变为 126，不向策略提供物体坐标、逆运动学结果或专家动作；网络仍预测全部 8 维动作。时序针对固定时长任务，变速、扰动和延迟需另行验证。
+- SoftArgmax beta 提高到 5。可选的可微端点重缩放把最外层细化区间中心 +/-0.992 映射至归一化执行器范围。旧模型默认仍为 beta=1、无重缩放，除非显式配置。重缩放保留可微性与边界，不裁剪梯度。
+- `repair_imitation.py` 从第 5000 步视觉/Q 权重初始化，对状态投影增加的时钟维度作零扩展，使用新优化器。纯 MSE 训练，按阶段均衡采样，批量 128，学习率 5e-5；复用 100 回合，不重标实际执行动作。训练与推理采用相同软解码，评估前同步目标价值网络。
+- 每 500 次更新评估 3 个新场景。达到 3/3 后，在未见种子 `300000..300019` 上评估并保存四视角视频与逐步动作。`validate_imitation_gate.py` 独立检查全部 20 个成功轨迹最后 30 个控制步：抬升大于 0.15 m、XY 偏移小于 0.05 m、旋钮/TCP 距离小于 0.05 m、手指开合度小于 0.025 m、相对抓握位移小于 0.015 m，并计算检查点哈希。
 
-Passing 20/20 is a sample-based engineering gate, not a guarantee of universal
-robustness. No RL restart is authorized by loss reduction alone. The old run's
-statistics must not be merged with this changed observation/action variant.
+20/20 是基于样本的工程门槛，不保证普遍鲁棒。不能仅凭损失下降恢复 RL。旧实验统计不得与修改观测/动作后的变体合并。
 
-Validation includes local phase boundary/stacking tests, original data-integrity
-tests, and actual CUDA finite-difference gradient and actuator endpoint checks in
-the repair process. Empirical success must be read from `physical_gate.json`.
+验证包括本地阶段边界/堆叠测试、原始数据完整性测试，以及修复进程中的实际 CUDA 有限差分梯度和执行器端点检查。实际成功状态须读取 `physical_gate.json`。
 
-## Closed-loop correction data
+## 闭环纠正数据
 
-The first repaired policy (500 MSE updates) succeeded in most validation scenes
-but failed seed300006; it did not pass the stability gate and RL remained stopped.
-`repair_imitation.py --resume-repair ... --dagger 6` continues those imitation
-weights/optimizers and gathers corrective labels on learner-visited states.
-Rollout actions remain network outputs. The expert generator computes the desired
-time-indexed trajectory using the initial scene geometry, then labels corrections
-relative to the current command target. Raw RGB, robot/clock state, expert labels
-and separately executed learner actions are saved in `dagger_*.npz`. Half of each
-MSE batch comes from correction data, half from original demonstrations, balanced
-by phase. Corrective observations are not marked as successful RL demonstrations.
+首个修复策略完成 500 次 MSE 更新后在多数验证场景成功，但种子 300006 失败，未通过稳定性门槛，RL 继续保持停止。
 
-Debug validation now includes the failed scene300006; final acceptance uses seeds
-400000..400019, separate from those debugging scenes. A failed final rollout stops
-that acceptance pass early; it cannot produce a validated checkpoint.
-`validate_imitation_gate.py` reads the required seed list from the run config and
-recomputes the same physical checks. Its synthetic tests verify that false success
-flags, slip and duplicate scenes cannot pass. Server tests run with the Isaac
-bundled Python, which supplies NumPy; the watchdog itself uses only the standard
-library. The 15 current unit tests pass in that environment.
+`repair_imitation.py --resume-repair ... --dagger 6` 继续模仿权重与优化器，在学习器实际访问状态上采集纠正标签。执行动作仍来自网络；专家根据初始几何计算时间索引目标轨迹，再相对当前命令目标生成纠正标签。原始 RGB、机器人/时钟状态、专家标签和单独记录的实际学习器动作保存为 `dagger_*.npz`。MSE 批量一半来自纠正数据，一半来自原始示范，均按阶段均衡。纠正观测不会被标为成功 RL 示范。
 
-A validated model may launch a new RL experiment using
-`runtime/isaac-sim-6.2.0/python.sh isaac_i2o/launch_validated_lid_rl.py <run>`.
-The launcher independently validates the gate and checkpoint hash, checks the old
-training service is stopped, preserves the old pointer, and starts 30,250 new
-online steps with the changed observation/action configuration. An additional
-10-episode evaluation at online step1000 checks for early degradation. The old
-6,000-step checkpoint is not mixed into the new experiment's step count.
+调试验证加入失败场景 300006，最终验收使用独立种子 `400000..400019`。最终验收任一执行失败即提前停止，不能生成已验证检查点。`validate_imitation_gate.py` 从配置读取必需种子列表并重算相同物理条件；合成测试确保虚假成功标记、滑移及重复场景无法通过。服务器测试使用带 NumPy 的 Isaac 自带 Python，监控器只使用标准库。该阶段 15 项单元测试通过。
 
-## Absolute targets and phase heads
+已验证模型可通过以下入口启动新 RL 实验：
+`runtime/isaac-sim-6.2.0/python.sh isaac_i2o/launch_validated_lid_rl.py <run>`。
+启动器独立校验门槛和检查点哈希，检查旧训练服务已停止，保留旧指针，并按新观测/动作配置启动 30250 个在线步骤。第 1000 步另评估 10 回合以检查早期退化。旧实验第 6000 步检查点不计入新实验步数。
 
-Incremental-output trials could grasp but still drifted during lift/hold; they
-were not accepted. The absolute-target contract in `absolute_joints.py` maps the
-network's first seven normalized outputs to joint-limit-bounded position goals.
-The regular controller tracks them with at most 0.04 rad target movement per
-control step. Repeating a fixed action cannot integrate a bias indefinitely.
-Original recorded actions are converted by integrating the *commanded* deltas
-from the known home target, not by substituting measured positions. Tests show
-converted demonstrations reproduce the same command trajectories. Gripper
-semantics remain unchanged. Pure absolute-target imitation uses new critic
-weights and only transfers the old visual encoder.
+## 绝对目标与阶段输出头
 
-The shared-head absolute model could still ignore the phase condition on rollout.
-The `--phase-heads 5` variant selects separately learned dueling value/advantage
-output heads using the five observable clock phase indicators. All eight actuator
-actions remain learned predictions; the clock selects a neural head, not an IK
-command. The ordinary I2O architecture remains the default with `phase_heads=1`.
-Soft-action gradients remain intact within each phase. A runtime test verifies
-phase selection and that a sample only updates its chosen output head.
+增量输出试验能够抓住，但抬升/保持仍漂移，因此未被接受。`absolute_joints.py` 将网络前七维归一化输出映射为关节限位内的位置目标，常规控制器每个控制步最多移动目标 0.04 rad。重复固定动作不再无限积分偏差。
 
-A validated absolute-target RL run uses normalized exploration std0.002 rather
-than0.01, since the same normalized noise now spans a full joint range rather
-than a 0.04-rad increment. Initial evaluation occurs at1000 online steps to check
-for degradation. These explicit engineering changes mean it is not a strict
-reproduction of the paper's original observation/action configuration.
+原始记录动作通过从已知初始目标积分“命令增量”转换，不能替换为实测位置。测试证明转换示范重现相同命令轨迹。夹爪语义不变。纯绝对目标模仿使用新价值网络权重，只迁移旧视觉编码器。
 
-## Phase goals, transition semantics and Cartesian control
+共享输出头的绝对目标模型在闭环中仍可能忽略阶段条件。`--phase-heads 5` 使用五个可观测时钟阶段指示，选择分别学习的对偶价值/优势输出头。全部八维执行动作仍是网络预测，时钟选择神经网络输出头，不是选择逆运动学命令。普通架构默认 `phase_heads=1`。阶段内软动作梯度保留；运行测试验证阶段选择及每个样本只更新其对应输出头。
 
-The accepted candidate must also avoid teacher-forced identity shortcuts: raw
-instantaneous position targets can be approximated by copying current pose. The
-`--demo-phase-goals` loader extracts the recorded final command of each expert
-phase and uses that as a constant goal label within the phase. This changes the
-BC target objective; it does not alter the immutable original recordings.
+已验证绝对目标 RL 使用归一化探索标准差 0.002，而非 0.01，因为相同归一化噪声现覆盖完整关节范围，而非 0.04 rad 增量。在线第 1000 步进行初次评估。这些工程变化意味着它不是论文原观测/动作配置的严格复现。
 
-Such relabeled goals are not the one-step actions recorded with the old next
-observations. Therefore `--demo-phase-goals` requires `--demo-bc-only`: demo rows
-contribute imitation/FOSD/margin objectives but are excluded from TD loss. Only
-new factual online transitions contribute TD. A runtime test of the actual
-critic update confirms that changing a demo's reward does not affect TD loss or
-gradients, while changing an online reward does. All-demo batches have zero TD
-loss, with a safe denominator. This is another explicit departure from the paper.
+## 阶段目标、转移语义与笛卡尔控制
 
-Joint-target trials still exhibited grasp-position error. The Cartesian candidate
-uses `--cartesian-goals`: four learned actions (TCP XYZ, gripper), fixed downward
-tool orientation, normalized workspace [0.38,-0.08,0.30]..[0.54,0.08,0.58] meters.
-Ordinary robot IK transforms network-selected TCP goals into joint targets; it
-does not access object geometry or choose task goals. Per-step joint target slew
-is still limited to0.04rad. Expert BC targets are TCP positions obtained by FK of
-the original commanded phase-end joint targets, not measured object pose passed
-to the policy. This reduces redundant-joint regression sensitivity and gives a
-more useful physical scale to the coarse-to-fine action range.
+验收候选还需避免教师强制下的恒等映射捷径：瞬时位置目标可能仅靠复制当前姿态近似得到。`--demo-phase-goals` 从记录提取每个专家阶段的最后命令，作为阶段内恒定目标标签。这改变行为克隆目标，但不修改不可变的原始记录。
 
-The final applicable configuration must be read from the validated run; intermediate
-incremental, absolute-joint, and instantaneous-target trials were not accepted.
-The final video and physical gate must correspond to that same checkpoint.
-Current unit suite:22 passing tests, plus runtime phase-head/TD-exclusion tests.
+这些重标目标不再是与旧下一观测配对的一步动作，因此 `--demo-phase-goals` 必须搭配 `--demo-bc-only`：示范行只参与模仿/FOSD/margin，不参与 TD；只有真实新在线转移参与 TD。实际价值更新测试证明，修改示范奖励不会改变 TD 损失或梯度，而修改在线奖励会。全示范批次 TD 为零，分母作安全处理。这也是与论文的明确差异。
 
-## Validating the frozen Cartesian candidate
+关节目标试验仍存在抓握位置误差。笛卡尔候选采用 `--cartesian-goals`：四维学习动作（TCP XYZ 与夹爪）、固定向下工具姿态，归一化工作空间为 [0.38,-0.08,0.30] 至 [0.54,0.08,0.58] m。普通机器人逆运动学把网络选择的 TCP 目标转为关节目标，不读取物体几何或选择任务目标。每步关节目标变化仍限制为 0.04 rad。
 
-The Cartesian candidate completed500 MSE updates from the old visual encoder
-with new four-action, five-phase critic heads. A frozen step500 checkpoint is
-being evaluated in run `outputs/imitation_repair/run_20261112_123759`; the three
-debug scenes passed before the20 new acceptance scenes began. Acceptance status
-must still be read from the physical gate, not inferred from these debug results.
+专家行为克隆目标来自原始命令阶段末关节目标的正运动学 TCP 位置，不是把实测物体位姿传给策略。这减少冗余关节回归敏感性，并为粗到细动作范围提供更合适的物理尺度。
 
-`fast_panda_ik.py` implements the exact imported URDF chain with an analytic
-geometric Jacobian and damped least-squares pose IK. Startup asserts its FK agrees
-with the existing environment FK at the home configuration to1e-10. Runtime
-solver checks positional error<0.05mm and orientation error<0.0005rad; failures
-fall back to the original SciPy IK. A finite-difference Jacobian check and60
-reachable pose tests passed in about0.1sec, maximum pose error0.04974mm. The
-controller seeds with the previous goal solution, caches goals within0.25mm,
-and clears that cache at reset. Those changes affect ordinary robot kinematics,
-not learned target selection. All23 current unit tests pass.
+最终配置必须读取已验证运行；中间增量、绝对关节和瞬时目标试验均未被接受。最终视频和物理门槛必须对应同一检查点。该阶段 22 项单元测试及运行时阶段头/TD 排除测试通过。
 
-## Acceptance and resumed RL (verified 2026-11-12)
+## 冻结笛卡尔候选的验证
 
-Run `outputs/imitation_repair/run_20261112_123759` passed the independent physical
-gate with20/20 successful unseen scenes and frozen step500 imitation weights.
-Final lift0.20147..0.20321m, worst final XY drift0.00483m, worst final knob/TCP
-distance0.00293m, worst last30-step grasp slip0.000148m. Validated checkpoint
-SHA256=e5b3c5bb19630a7dfa43091b05c319c56e7d2afbd3d7466e377a38bb74ec3e0e.
-The acceptance model uses clock conditioning, five output heads, four Cartesian
-goal/gripper actions, fixed downward orientation, phase-end BC labels, beta5
-and soft endpoint rescaling. No DAgger data was used in this final candidate.
+候选从旧视觉编码器与新的四动作、五阶段价值头初始化，完成 500 次 MSE 更新。冻结的第 500 步检查点在 `outputs/imitation_repair/run_20261112_123759` 评估；开始 20 个新验收场景前，三个调试场景均通过。不能由调试结果推断最终验收，仍须读取物理门槛。
 
-RL started in `outputs/i2o_panda/run_repaired_20261112_125239`, service
-`pingandog-i2o-repaired-20261112_125239.service`, and actually reached160 online
-updates with finite losses. Peak reserved CUDA memory5.73GiB. Demo rows are BC
-only; TD uses real online transitions. Exploration std0.002, augmentation pad0
-keeps the validated calibrated-camera input distribution. Additional evaluation
-at1000 steps is pending. No post-RL success rate has yet been established.
-The watchdog was resumed only after online updates were verified and now tracks
-this new run. Old training remains stopped; its step count is not merged.
+`fast_panda_ik.py` 实现导入 URDF 的精确运动链，使用解析几何雅可比和阻尼最小二乘位姿逆运动学。启动时断言初始位形的正运动学与环境现有实现误差不超过 1e-10。运行求解检查位置误差小于 0.05 mm、姿态误差小于 0.0005 rad，失败则回退原 SciPy 逆运动学。有限差分雅可比检查及 60 个可达位姿测试约 0.1 秒通过，最大位姿误差 0.04974 mm。控制器以前一目标解初始化，对 0.25 mm 内目标缓存，重置时清空。变化只涉及机器人运动学，不改变网络目标选择。此时全部 23 项单元测试通过。
 
-Local user-facing evidence: `panda_validation/imitation_repair/RESULTS.md`,
-`physical_gate.json`, `validated_grasp.mp4`, and `repair_start_status.json`.
+## 验收与 RL 恢复：2026-11-12 已验证
+
+`outputs/imitation_repair/run_20261112_123759` 的冻结第 500 步模仿权重通过独立物理门槛，未见场景成功 **20/20**。最终抬升 0.20147..0.20321 m；最差最终 XY 漂移 0.00483 m；最差最终旋钮/TCP 距离 0.00293 m；最后 30 步最差抓握滑移 0.000148 m。
+
+检查点 SHA256：`e5b3c5bb19630a7dfa43091b05c319c56e7d2afbd3d7466e377a38bb74ec3e0e`。
+验收模型使用时钟条件、五个输出头、四维笛卡尔目标/夹爪动作、固定向下姿态、阶段末行为克隆标签、beta=5 和软端点重缩放。最终候选未使用 DAgger 数据。
+
+RL 在 `outputs/i2o_panda/run_repaired_20261112_125239` 启动，服务为 `pingandog-i2o-repaired-20261112_125239.service`。当时已实际完成 160 次在线更新且损失有限，CUDA 峰值预留显存 5.73 GiB。示范仅用于行为克隆，TD 使用真实在线转移。探索标准差 0.002，数据增强 pad=0，以保持已验证的标定相机输入分布。当时第 1000 步附加评估尚待执行，未得到 RL 后成功率。
+
+确认在线更新后才恢复监控器并指向新实验；旧训练继续停止，步数不合并。本地面向用户的证据为 `panda_validation/imitation_repair/RESULTS.md`、`physical_gate.json`、`validated_grasp.mp4` 和 `repair_start_status.json`。
