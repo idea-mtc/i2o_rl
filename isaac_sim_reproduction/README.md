@@ -1,8 +1,8 @@
 # I2O-RL：Isaac Sim 复现与实验代码
 
-本目录是江行服务器项目的代码交付快照，整理于 2026-11-16。保留仓库根目录原有实现；新增代码集中在本目录。最新代码取自 `outputs/microwave_expert_fix/run_20261115/code`，启动脚本与配置取自服务器项目根目录。
+本目录是jiangxing服务器项目的代码交付快照，整理于 2026-11-16。保留仓库根目录原有实现；新增代码集中在本目录。最新代码取自 `outputs/microwave_expert_fix/run_20261115/code`，启动脚本与配置取自服务器项目根目录。
 
-## 负责人阅读入口
+## 文件说明
 
 - `isaac_i2o/aligned_night.py`：五任务训练入口。
 - `isaac_i2o/aligned/paper_update.py`：IL 与 RL 联合更新。
