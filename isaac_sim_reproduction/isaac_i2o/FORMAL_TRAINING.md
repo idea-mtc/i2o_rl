@@ -1,68 +1,117 @@
-# 锅盖 I2O 正式实验：种子 1，2026-11-12
+# Saucepan I2O formal run, seed 1, 2026-11-12
 
-用户授权在 jiangxing 服务器先进行完整批量显存与速度测试，通过后启动正式单任务训练。本实验仅使用 I2O，不是完整 VL-I2O。本文记录当时的运行状态，当前结果以交付目录首页为准。
+The user authorized a full batch memory/speed test and, on success, starting a
+formal single-task run on jiangxing. This run is I2O-only, not full VL-I2O.
 
-## 批量 256 实测验收
+## Measured batch-256 acceptance
 
-`outputs/i2o_panda/run_20261112_075253/benchmark.json` 全部检查通过：
+`outputs/i2o_panda/run_20261112_075253/benchmark.json` passed all checks:
 
-- 加载全部 100 条固定示范，四视角、84×84、八帧堆叠。
-- 批量 256，float32；实际执行 MSE 前向、反向和 AdamW 更新，以及组合 C51/FOSD/margin/MSE 更新，无显存溢出且损失有限。
-- 8 次 MSE 预热及 16 次在线组合更新；第 8 步后的周期评估、继续训练、最终评估与检查点重载均通过。
-- PyTorch 峰值已分配显存 4.825 GiB，峰值预留显存 5.588 GiB。
-- 测试结束时整卡占用 8779 MiB / 85651 MiB；这是结束时读数，不是采样得到的整卡峰值。
-- 在线每步平均 0.9580 秒，预热后中位数 0.9385 秒，包含交互、回放采样、CUDA 传输与优化器更新，不含评估。
-- 260 步评估回合约 46.3 秒。
-- 数据/场景加载约 27.7 秒；8 次 MSE 更新约 4.10 秒。
+- All 100 fixed demos loaded, four views, 84x84, eight stacked frames.
+- Batch 256, float32; actual MSE forward/backward/AdamW updates and combined
+  C51/FOSD/margin/MSE updates executed, no OOM and finite losses.
+- 8 MSE warmup updates + 16 online combined updates; periodic evaluation after
+  step 8, resumed training, final evaluation and checkpoint reload passed.
+- PyTorch peak allocated: 4.825 GiB; peak reserved: 5.588 GiB.
+- Entire GPU used at benchmark end: 8779 MiB / 85651 MiB. This last value is
+  an end-of-test device reading, not a sampled whole-device peak.
+- Mean online step: 0.9580 s, post-warmup median: 0.9385 s, including interaction,
+  replay sampling, CUDA transfers and optimizer updates, excluding evaluation.
+- 260-step evaluation episode: approximately 46.3 s.
+- Data/scene load ~27.7 s; 8 MSE updates ~4.10 s.
 
-单种子估计：在线更新约 8.05 小时，模仿预热约 8.5 分钟，最多 160 个评估回合约 2.06 小时，另加读写时间。同等负载下计划 **10–12 小时**，较早成功可缩短评估。该估计来自短测试，不是完成保证。
+Single-seed estimate: ~8.05 hours online updates, ~8.5 minutes imitation warmup,
+~2.06 hours for up to 160 evaluation episodes, plus I/O. Plan **10–12 hours**
+under similar load; earlier task success can shorten evaluation. This is an
+estimate from a short benchmark, not a completion guarantee.
 
-## 已启动的历史正式实验
+## Started formal run
 
-目录：`/home/ubuntu/pingandog/outputs/i2o_panda/run_20261112_075738`。
-启动器当时选择 GPU 0。
-控制台日志：`/home/ubuntu/pingandog/logs/saucepan_formal_seed1_20261112.log`。
-配置：`configs/formal_saucepan_seed1_20261112.json`。
-启动脚本：`bash isaac_i2o/run_formal_saucepan.sh`；同一实验运行中不要重复启动。
+Run directory: `/home/ubuntu/pingandog/outputs/i2o_panda/run_20261112_075738`.
+GPU selected by existing launcher: 0.
+Console log: `/home/ubuntu/pingandog/logs/saucepan_formal_seed1_20261112.log`.
 
-| 配置项 | 正式实验设置 |
+Configuration: `configs/formal_saucepan_seed1_20261112.json`.
+Launch script: `bash isaac_i2o/run_formal_saucepan.sh` (do not launch it a second
+time while the existing run is active).
+
+| Setting | Formal run |
 |---|---|
-| 任务与机器人 | 程序化锅盖 / 固定基座 Panda |
-| 示范 | 经审计的固定 100 回合，14885 个转移 |
-| 图像 | 四相机，84×84，八帧通道堆叠 |
-| 输入形状 | RGB [4,24,84,84]，状态 [120]，动作 [8] |
-| 批量 | 256；有在线数据后示范与在线各半 |
-| 优化器 | AdamW，学习率 5e-5，权重衰减 0.1 |
-| 价值/动作网络 | 3 层、5 个区间、51 个回报原子，SoftArgmax beta=1 |
-| 损失权重 | 动作模仿 1、价值间隔 1（间隔 0.01）、TD 0.1；保留继承的 FOSD |
-| 折扣/目标更新 | 0.99 / tau 0.02 |
-| 初始化 | 新模型，不复用显存测试检查点 |
-| 模仿预热 | 1000 次纯 MSE 更新，随后同步目标价值网络 |
-| 在线训练 | 30250 个环境步，每步一次组合更新 |
-| 回放 | 50000 个在线转移容量，另加固定示范 |
-| 检查点 | 每 1000 步原子保存最新版本，每 5000 步保存编号版本；预热每 250 步保存 |
-| 周期评估 | 每 5000 步评估 10 回合 |
-| 最终评估 | 100 回合，种子序列起点 100000 |
-| 训练种子 | 1，未启动额外种子 |
+| Task/robot | Procedural saucepan lid / fixed-base Panda |
+| Demos | Fixed, audited 100 episodes, 14,885 transitions |
+| RGB | Four cameras, 84x84; eight-frame channel stacking |
+| Input shapes | RGB [4,24,84,84], state [120], action [8] |
+| Batch | 256, half demo/half online after online data exists |
+| Optimizer | AdamW, lr 5e-5, weight decay 0.1 |
+| Value/action network | 3 levels, 5 bins, 51 return atoms, SoftArgmax beta=1 |
+| Loss weights | Action imitation 1, value margin 1 with margin 0.01, TD 0.1; inherited FOSD retained |
+| Discount/target update | 0.99 / tau 0.02 |
+| Initialization | Fresh model; benchmark checkpoint is not reused |
+| Imitation warmup | 1000 MSE-only updates, then target critic synchronization |
+| Online training | 30,250 environment steps, one combined update per step |
+| Replay | Capacity 50,000 online transitions, plus fixed demos |
+| Checkpoints | Atomic latest every 1000 steps, numbered every 5000; warmup every 250 |
+| Periodic evaluation | Every 5000 steps, 10 episodes |
+| Final evaluation | 100 episodes, seed stream 100000 |
+| Training seed | 1; no additional seeds started |
 
-优化参数包含四个 CNN 编码器、机器人状态投影、交叉注意力融合及分层 Q/价值/动作计算网络。联合 RL 时目标价值网络通过软更新跟随，纯 MSE 预热后同步。没有训练 VLM。
+Optimized parameters are the four CNN encoders, robot-state projection,
+cross-attention fusion and hierarchical Q/value/action computation network.
+The target critic follows via soft updates during joint RL; it is synchronized
+after MSE-only warmup. No VLM is trained.
 
-## 监控与产物
+## Monitoring and artifacts
 
-`progress.json` 在启动、预训练、在线训练、评估及完成/失败阶段原子更新。`metrics.jsonl` 保存损失，`episodes.jsonl` 保存训练结果，`evaluation_history.json` 保存周期保留初始场景评估结果。评估不进入回放，结束后恢复随机数流。由于共享物理环境，周期评估会把当前未完成训练回合按时间上限截断，保留自举，评估后开始新回合。
+`progress.json` is atomically updated throughout startup, pretraining, online
+training, evaluation and completion/failure. `metrics.jsonl` contains loss data;
+`episodes.jsonl` contains train outcomes; `evaluation_history.json` contains
+periodic held-out-initialization results. Evaluation never enters replay and
+RNG streams are restored afterward. Because the physical environment is shared,
+a periodic evaluation explicitly cuts the current partial training episode as a
+time limit (bootstrapping retained) and starts a fresh training episode afterward.
 
-保存 Python 源码副本、数据集哈希及解析后的网络配置。`checkpoint.pt` 为最新模型/优化器检查点，`pretrain_checkpoint.pt` 在预热时保存。支持模型与优化器续训；在线恢复还原步数及更新计数，要求 `--pretrain-updates 0`，并保留已保存目标网络。此历史版本未保存在线回放、随机数及环境状态，不能视为完整精确续跑。
+The run preserves a copy of Python sources, dataset hash and resolved network
+configuration. `checkpoint.pt` is the latest model/optimizer checkpoint;
+`pretrain_checkpoint.pt` is saved during warmup. Optimizer/model continuation is
+supported. Online resume restores checkpoint step/update counters and requires
+`--pretrain-updates 0`; it preserves the saved target network. Online replay and
+RNG/environment state were not saved, so this is not an exact whole-run continuation.
 
-## 论文对齐与限制
+## Paper alignment and limitations
 
-已匹配 Panda、四路 84×84 RGB、100 条示范、批量 256、AdamW 学习率 5e-5/权重衰减 0.1、折扣 0.99、由粗到细层数/区间数及 beta=1。八帧堆叠遵循仓库配置。论文对训练步单位和阶段调度交代不完整；本次明确计为 30250 在线步/更新，另加 1000 次 MSE 预热。预热长度、评估频率和回放容量是工程选择，不称为论文报告值。
+Known paper settings matched: Panda, four RGB views at 84x84, 100 demos,
+batch 256, AdamW lr5e-5/wd0.1, discount0.99, coarse-to-fine levels/bins and beta1.
+Eight-frame stacking follows repository configuration. Paper training-step units
+and phase schedule are incompletely specified: this run explicitly counts
+30,250 online steps/updates **plus** 1000 MSE warmup updates. Warmup length,
+evaluation cadence and replay capacity are engineering choices, not claimed as
+paper-reported values. It retains repository C51/FOSD losses and sparse +1
+success rewards, not the full VLP-generated shaped rewards or the paper's
+simplified squared Bellman objective. Geometry is the project Isaac Sim analogue,
+not original RLBench assets. A first seed is running; the paper's three-run
+averages have not been reproduced. Completion and grasp success remain unproven
+until the running experiment finishes and evaluation results are checked.
 
-本历史实验保留仓库 C51/FOSD 损失及稀疏成功 +1 奖励，不是完整 VLP 塑形奖励，也不是论文简化的 Bellman 平方目标。几何是项目 Isaac Sim 近似场景，不是原始 RLBench 资产。当时只有首个种子运行，未复现论文三次运行均值；完成状态和抓取成功必须以实际评估为准。
+## Recovery on 2026-11-12
 
-## 2026-11-12 恢复记录
+Original run stopped around 09:17 UTC; its last progress record was step 4256.
+The log ends with `Terminated`, without a Python traceback or CUDA OOM. Host
+uptime rules out a server reboot. Accessible kernel journal has no entries;
+dmesg is permission restricted. SSH session 78203 closed at 09:17:16 UTC, near
+the interruption, but available records do not prove the signal sender.
+The workspace isolation service only maintains a VS Code extension bootstrap;
+its coincident execution is not evidence that it killed training.
 
-原实验约于 UTC 09:17 停止，最后进度为第 4256 步。日志以 `Terminated` 结束，没有 Python 异常堆栈或 CUDA 显存溢出。服务器运行时间排除重启；可访问内核日志无记录，dmesg 无权限。SSH 会话 78203 在 UTC 09:17:16 关闭，时间接近中断，但不足以证明信号发送者。工作区隔离服务仅维护 VS Code 扩展启动，其同时执行不能证明它终止了训练。
+Recovery uses `run_resume_saucepan.sh` and the original atomic `checkpoint.pt`,
+in a separate run directory. A transient systemd user service
+`pingandog-i2o-saucepan-recovery-20261112.service` owns the process independently
+of SSH login scopes; user lingering was already enabled. Logs go to
+`logs/saucepan_recovery_20261112.log`. No training hyperparameters were reduced.
+The online replay restarts and the environment resets; this must be reported
+when comparing results to uninterrupted training.
 
-使用 `run_resume_saucepan.sh` 和原子保存的原 `checkpoint.pt` 在独立目录恢复。临时 systemd 用户服务 `pingandog-i2o-saucepan-recovery-20261112.service` 独立于 SSH 管理进程；用户驻留已启用。日志为 `logs/saucepan_recovery_20261112.log`。训练超参数未降低；在线回放重新初始化、环境重置，与不中断训练比较时必须披露。
-
-恢复检查点位于在线第 4000 步、总更新 5000 次；全部模型张量有限值检查通过，两个优化器状态成功加载，重新连接 SSH 后观察到新的有限在线更新。原记录最后到 4256 步，因此约 256 个未保存步骤重新执行。恢复目录 `outputs/i2o_panda/run_20261112_103403`，当时使用 GPU 0。
+Verified recovery checkpoint: online step 4000, total updates 5000; all model
+state tensors passed finite-value checks, both optimizer states loaded, and
+new finite online updates were observed after reconnecting over SSH. Original
+last reported step 4256 implies approximately 256 uncheckpointed steps replayed.
+Recovery run: `outputs/i2o_panda/run_20261112_103403` on GPU 0.

@@ -1,32 +1,59 @@
-# 微波炉专家来源标签修复：2026-11-15
+# Microwave expert provenance correction, 2026-11-15
 
-授权范围：只使用物理 GPU 2、3、4。目标截止时间为北京时间 2026-11-16 09:00。截止时间是运行时限，不是成功保证。
+Authorized: use only physical GPUs 2, 3, 4. Target final results by 2026-11-16
+09:00 Asia/Shanghai. The deadline is a runtime limit, not a promise of success.
 
-服务器实验目录：`/home/ubuntu/pingandog/outputs/microwave_expert_fix/run_20261115`。
-服务：`pingandog-microwave-expert-fix-20261115.service`。
+Server run: `/home/ubuntu/pingandog/outputs/microwave_expert_fix/run_20261115`.
+Service: `pingandog-microwave-expert-fix-20261115.service`.
 
-## 修改内容
+## Intervention
 
-`aligned/expert_replay.py` 基于历史回放实现。轨迹是否成功仍决定其是否进入成功池；通过现有损失掩码位置传入显式 `is_expert` 标记，决定哪些样本参与动作 MSE 和专家 Q 值间隔损失。所有抽样转移仍可用于 TD，权重保持 0.1。
+`aligned/expert_replay.py` derives from the historical replay implementation.
+Success still selects successful-pool membership. An explicit `is_expert` flag
+selects action MSE and expert Q-margin, through the existing loss mask slot.
+All sampled transitions remain eligible for TD with unchanged weight 0.1.
+Old replay entries are migrated by matching original manifest paths, never by
+copying successful/demo flags. Checkpoints persist and validate provenance.
+The historical training path remains unchanged for comparison.
 
-旧回放条目通过匹配原始清单路径迁移，绝不直接复制成功或示范标记作为专家身份。检查点保存并校验来源信息。历史训练入口保持不变，以便比较。
+## Experiment
 
-## 实验设计
+Three branches use the identical immutable source IL checkpoint
+`outputs/extended_asset_training/run_20261114/open_microwave/validated_start.pt`.
+They differ in online RNG seeds 1, 2, 3 on physical GPUs 2, 3, 4 respectively.
+These are repeated fine-tuning runs, not independent from-scratch training.
+The source100 demos are shared read-only; models and source snapshots are
+isolated under this run directory.
 
-三个分支使用同一个不可变 IL 初始化检查点：
-`outputs/extended_asset_training/run_20261114/open_microwave/validated_start.pt`。
-在线随机种子分别为 1、2、3，对应物理 GPU 2、3、4。这是重复微调实验，不是三个从零独立训练的实验。原始 100 条示范只读共享；模型和代码快照在本实验目录内隔离。
+Short collection is uninterrupted to1000. Checkpoints500 and1000 are evaluated
+on seeds900000+5*i for i in0..19, after collecting1000 transitions. Baseline is
+reevaluated per worker. A branch enters full training only if baseline>=14/20,
+500>=12/20, and1000>=max(14,baseline-2)/20, with finite updates. Historical
+uncorrected B1000=3/20 is a reference, not a matched-stream intervention.
 
-短实验连续采集至 1000 步后，再对第 500 步和第 1000 步检查点进行评估。测试种子为 `900000+5*i`，其中 `i=0..19`。每个工作进程独立重测基线。进入完整训练必须同时满足：基线成功次数至少 14/20，第 500 步至少 12/20，第 1000 步至少 `max(14, baseline-2)/20`，且更新指标均为有限值。历史未修正分支 `B1000=3/20` 仅作参考，不是数据流匹配的干预对照。
+Passing branches continue to30250 total online updates, with20-episode
+intermediate evaluations each5000 steps. Best and latest checkpoints are saved
+separately. The source IL, final30250 and best-development model are each
+measured on independent held-out seeds910000..910099. Final seeds are never
+used for checkpoint selection. Failed short branches stop and retain results.
 
-通过门槛的分支原计划继续到累计 30250 次在线更新，每 5000 步进行 20 回合中间评估，分别保存最佳与最新检查点。源 IL、最终 30250 步和开发集最佳模型分别用独立保留种子 `910000..910099` 测试；最终测试种子不参与模型选择。短实验失败的分支停止并保留结果。
+## Device and recovery controls
 
-## 设备与恢复控制
+CUDA visibility alone was insufficient: an initial device probe created a6MiB
+GPU0 graphics context and was immediately stopped before training. The final
+launcher uses bubblewrap with a private /dev exposing only each assigned NVIDIA
+and DRM device. Rendering, physics and PyTorch use local device0 mapped to the
+assigned physical GPU. A second probe passed and all actual workers were
+verified solely on their assigned GPUs. The host supervisor additionally audits
+all child GPU allocations and terminates only its own process group on a
+violation. It never selects a GPU outside2,3,4 or stops unrelated processes.
 
-仅限制 CUDA 可见性不够：首次设备探测在 GPU 0 创建了 6 MiB 图形上下文，训练开始前即被停止。最终启动器使用 bubblewrap 构建私有 `/dev`，只暴露分配给该进程的 NVIDIA 和 DRM 设备。渲染、物理仿真和 PyTorch 均使用映射到指定物理卡的本地设备 0。第二次探测通过，实际训练进程均已核实只使用各自指定的 GPU。
+A project lock is held per GPU. Launch requires24,000MiB free. Checkpoints are
+atomic every250 updates; a partial physical episode is truncated on resume.
+Each branch allows up to3 process launches and restarts after30min of unchanged
+progress. Less than8GiB free disk or reaching the morning deadline stops work.
+Systemd user service and user lingering keep it independent of SSH sessions.
 
-宿主监督进程还会审计所有子进程的 GPU 分配，发现违规时仅终止自身进程组。它不会选择 GPU 2、3、4 之外的设备，也不会停止无关进程。
-
-每张卡持有项目锁，启动要求空闲显存不少于 24000 MiB。每 250 次更新原子保存检查点；恢复时截断未完成的物理回合。每个分支最多启动进程 3 次，进度持续 30 分钟不变时重启。磁盘空闲不足 8 GiB 或到达早间截止时间时停止。systemd 用户服务与用户驻留设置使实验不依赖 SSH 会话。
-
-运行输出：`summary.json`、`REPORT.md`、`supervisor.jsonl`、各分支的 `progress.json`、`gate.json`、`result.json` 和 `gpuN_device_audit.json`。每个完成初始化的 Isaac 工作进程均通过了 3 项 CPU 专家来源测试。
+Live outputs: `summary.json`, `REPORT.md`, `supervisor.jsonl`, per-branch
+`progress.json`, `gate.json`, `result.json`, and `gpuN_device_audit.json`.
+Three CPU provenance tests passed inside each initialized Isaac worker.

@@ -1,62 +1,114 @@
-# Panda 锅盖场景与四相机专家验证
+# Panda saucepan-lid scene and four-camera expert validation
 
-2026-11-12 在 jiangxing 服务器使用 Isaac Sim 6.2 / PhysX 实现并完成物理测试。该场景是项目自行构建的程序化取锅盖任务近似，不是原始 RLBench `.ttm` 模型，也不是论文基准的精确复制。
+Implemented and physically tested on jiangxing, 2026-11-12, Isaac Sim 6.2 / PhysX.
+This is a project-authored procedural analogue of the take-lid-off-saucepan
+task, not the original RLBench .ttm model or an exact paper benchmark replica.
 
-## 复现命令
+## Reproduce
 
 ```bash
 cd /home/ubuntu/pingandog
 scripts/run_isaac62.sh isaac_i2o/verify_saucepan.py --episodes 3 --seed 12
 ```
 
-历史启动器选择空闲 GPU 并持有项目 GPU 锁。输出在 `outputs/panda_saucepan/run_*/`；`latest` 指向最近完成的运行，包括失败运行，必须检查 `result.json`。已验证运行 `run_20261112_065954` 的 `pass=true`，三个专家试验均成功。
+Use the existing launcher for its idle-GPU selection and project GPU lock.
+Results: `outputs/panda_saucepan/run_*/`; `latest` points to the latest completed
+run, including failures. Always check result.json. The verified run is
+`run_20261112_065954`, pass=true, three successful expert trials.
 
-## 场景
+## Scene
 
-- 固定基座 Panda，采用此前物理抓取验证使用的有界关节偏置位置控制器。物理频率 120 Hz，命令频率名义上为 10 Hz。
-- 静态桌面高 0.2 m。空心锅半径 0.082 m，底厚 0.008 m，环壁由 32 个凸盒组成，锅沿高 0.083 m，带长侧把手。
-- 独立动态锅盖质量 0.2 kg，圆盘半径 0.084 m、厚 0.008 m；带杆和半径 0.018 m 的抓握旋钮。圆盘、杆和旋钮组成具有明确质量与惯量的复合刚体，放置在锅沿上。
-- 抓握材料静/动摩擦系数为 1.0/0.8，依靠接触摩擦抓握，没有机器人与锅盖之间的附着、焊接、吸附或回合内物体瞬移。
-- 锅与盖初始 XY 为 [0.46,0]，或每轴随机 +/-0.02 m。初始状态设置只在物理执行前的重置阶段进行。
+- Fixed-base Panda and the same bounded joint-bias position controller as the
+  previously verified physical grasp scene. Physics 120 Hz, commands 10 Hz.
+- Static table top at 0.2 m. Hollow saucepan: radius 0.082 m, bottom 0.008 m,
+  annular wall made of 32 convex boxes, rim height 0.083 m, long side handle.
+- Independent dynamic lid: 0.2 kg, disc radius 0.084 m, thickness 0.008 m,
+  stem and grasp knob radius 0.018 m. Disc, stem and knob are one compound
+  rigid body with explicitly authored mass/inertia. It rests on the pot rim.
+- Grasp material static/dynamic friction 1.0/0.8. Grasp is contact/friction,
+  with no robot-lid attachment, weld, suction or in-episode object teleportation.
+- Pot/lid initial XY is nominal [0.46,0] or randomized +/-0.02 m per axis.
+  Initial state setters are used only by reset before physical execution.
 
-场景保存为 `/home/ubuntu/pingandog/assets/tasks/take_lid_off_saucepan/scene.usda`，同目录下 `config.json` 保存配置。场景引用已导入的项目本地 Panda，无需在线下载资产。导出的 USD 保存名义初始场景；专家控制和相机流由 Python 入口提供，并非嵌入 USD 的自主行为。
+Saved scene: `/home/ubuntu/pingandog/assets/tasks/take_lid_off_saucepan/scene.usda`.
+Configuration: same folder `config.json`. Scene references the already imported
+project-local Panda; no online asset download is required. This exported USD
+contains the nominal initial scene. Expert control and camera stream setup are
+provided by the Python entry, not embedded as autonomous behavior in the USD.
 
-## 相机
+## Cameras
 
-顺序为 **front、wrist、left_shoulder、right_shoulder**。三台相机固定于世界坐标，腕部相机通过考虑 URDF 手部偏移的固定变换挂接在实际 Panda link7 上，不是把世界固定相机改名为腕部相机。路径、光学参数和位置见源码及配置。原生 RGB 为 640×480，同帧双线性缩放为 84×84 策略图像；每台相机只有一个渲染输出，避免重复流。
+Order: **front, wrist, left_shoulder, right_shoulder**. Three cameras are fixed
+to the world. The wrist camera is parented to the actual Panda link7 with a
+constant transform accounting for the URDF hand offset; it is not a world-fixed
+camera renamed as wrist. Exact paths, optics and positions are in the source
+and config. Native RGB is 640x480; bilinear resizing of the same frame produces
+84x84 policy RGB. One render product per camera avoids duplicated-stream issues.
 
-原始 RGB 张量为 `[4,3,84,84]`，默认两帧通道堆叠后为 `[4,6,84,84]`；状态 `[30]`；归一化动作 `[8]`，即 7 个关节增量和夹爪。腕部近裁剪面为 0.005 m，以保留近处把手。预览视频带标签，为 1280×960 的 2×2 四视角拼图，按名义仿真时间 10 fps 编码。
+Raw RGB tensor: `[4,3,84,84]`. With default two-frame channel stacking:
+`[4,6,84,84]`; state `[30]`; normalized action `[8]` (7 joint deltas + gripper).
+The wrist near clipping plane is 0.005 m to retain near-field handle visibility.
+Preview videos are labeled 2x2 composites at 1280x960, 10 fps simulated time.
 
-## 专家与成功规则
+## Expert and success rule
 
-专家使用物体位姿及 URDF 数值逆运动学：靠近旋钮上方、下降、闭合、命令抬升 0.20 m 并保持。动作经过与未来学习器相同的归一化关节增量/绝对夹爪接口。本验证未使用已学习策略或 I2O 训练。
+Expert uses object pose plus URDF numerical IK: approach above knob, descend,
+close jaws, lift by a commanded 0.20 m and continue holding. Actions pass through
+the same normalized joint-delta/absolute-gripper interface exposed to a future
+learner. No learned policy or I2O training is used in this validation.
 
-成功要求连续 30 个控制步满足：实测锅盖抬升大于 0.15 m、XY 偏移小于 0.05 m、旋钮与 TCP 距离小于 0.05 m、实测手指开合度小于 0.025 m。该区间可包含上升末段，并非在最终高度静止 3 秒；满足成功条件即停止。专家附加检查要求该区间旋钮/TCP 相对漂移小于 0.015 m、基座漂移小于 0.0001 m。
+Success requires measured lid lift >0.15 m, XY deviation <0.05 m, knob-to-TCP
+distance <0.05 m and measured finger opening <0.025 m for 30 consecutive control
+steps (3 simulated seconds). The raised interval may include the end of ascent;
+this is not a claim of 3 seconds motionless at the final height. The task stops
+when its success condition is met. An additional expert check requires relative
+knob/TCP drift <0.015 m during that interval and base drift <0.0001 m.
 
-这些几何阈值是本项目 Isaac Sim 验收条件。RLBench 使用抓握状态及接近成功传感器；原始资产位姿、传感器体积、碰撞网格和控制时序尚未精确对齐。不能将专家成功率与论文学习器结果直接比较。
+These explicit geometric thresholds are our Isaac Sim acceptance criteria.
+RLBench uses grasp state and a proximity-success detector; original asset poses,
+sensor volume, collision meshes and control timing have not been matched exactly.
+Do not compare this expert success rate directly to the paper's learner results.
 
-## 实测验收
+## Measured acceptance
 
-目录：`outputs/panda_saucepan/run_20261112_065954/`。
+`outputs/panda_saucepan/run_20261112_065954/`:
 
-- 一个名义位置及两个随机 XY 试验，**3/3 通过**。
-- 名义位置：最终抬升 0.20024 m，末段名义 3 秒内最小抬升 0.15672 m，旋钮/TCP 相对变化范围 0.0000227 m，基座漂移 0.0000020 m。
-- 张开夹爪的负对照执行相同接近/抬升路径，没有抬起锅盖，最大高度变化约 6e-8 m。
-- 场景中未发现连接锅盖的物理关节。
-- 四路图像均有效、非空且随任务变化。
-- 固定相机矩阵漂移为 0，腕部局部安装漂移为 0；名义试验腕部相机平移约 0.0634 m，证明世界位姿随手臂变化。
-- 初始和抬升四视角图像经人工目视检查，锅盖明显离开空心锅且由旋钮处夹持；MP4 格式与时长已检查。
+- One nominal + two random XY trials: **3/3 passed**.
+- Nominal trial: final lift 0.20024 m, minimum lift over last 3 s 0.15672 m,
+  relative knob/TCP range 0.0000227 m, base drift 0.0000020 m.
+- Open-jaw negative control followed the same approach/lift route and did not
+  lift the lid (maximum height change ~6e-8 m).
+- No physics joints involving the lid were found in the stage.
+- All four streams valid/nonblank and all four images changed during the task.
+- Fixed camera matrix drift 0; wrist local mount drift 0; nominal wrist camera
+  translation ~0.0634 m, proving its world pose changes with the arm.
+- Initial and lifted four-view images were visually inspected; the lid is visibly
+  separate from the hollow pot and held at its knob. MP4 format/duration checked.
 
-每回合包含各相机原生及 84×84 阶段 PNG、四视角拼图和 `expert_four_views.mp4`；另有 `result.json`、`config.json`、`trace.json`、`camera_snapshots.json`、`scene_initial.usda`。
+Each episode contains phase PNGs for all cameras at native and 84x84 resolutions,
+four-view composites and `expert_four_views.mp4`. Other outputs: `result.json`,
+`config.json`, `trace.json`, `camera_snapshots.json`, `scene_initial.usda`.
 
-初始失败设置单独保留。修复包括在物理暂停时创建新刚体、避免实时物理中修改 defaultPrim、每个视角只使用一个原生渲染输出。共享运行环境、Go2 资产及已有方块/SoftArgmax 环境源码未修改。
+Initial failed setup runs are preserved separately. Fixes included building the
+new rigid body while physics is stopped, avoiding defaultPrim changes during
+live physics, and using one native render product per view. No shared runtime,
+Go2 asset or existing cube/SoftArgmax environment source was modified.
 
-## 后续训练接口
+## Future training
 
-`saucepan_env.SaucepanEnv` 提供 reset/step/observe/expert_actions。在本次最初场景验证时，`train.py` 仍只选择方块环境，锅盖训练尚需接入任务选择器与示范采集器。这一步只验证场景、相机和脚本专家；三次试验不能证明广泛鲁棒性，也不是论文所需的 100 条示范。
+`saucepan_env.SaucepanEnv` exposes reset/step/observe/expert_actions. The existing
+`train.py` still selects the cube environment; a task selector and demo collector
+must be connected before saucepan training. This work validates scene, cameras,
+and scripted expert only. Three trials do not establish broad robustness or
+provide the paper's 100 demonstrations.
 
-## 后续补充：固定数据采集与训练入口
+## Fixed-data collection and training entry
 
-现已可在 `train.py` 通过 `--task take_lid_off_saucepan` 选择该任务，独立采集器保存原始四相机回合，见 [DEMOS.md](DEMOS.md)。采集/训练以相同比例和安装位置渲染 168×126，再缩放至 84×84。
-
-后续时钟审计发现，初始场景验证中的实时渲染增加了物理步数，因此此前 10 Hz 仅为名义值。当前锅盖控制器在暂停物理时渲染并明确恢复，采集数据已验证实际动作间隔为 0.1 秒。此前几何与成功报告保留，不重标为已通过时钟验证的数据。
+The task is now selectable in `train.py` using `--task take_lid_off_saucepan`,
+and the independent collector saves raw four-camera episodes. See DEMOS.md.
+Collection/training native images are 168x126 at the same aspect/mounts, resized
+to 84x84. A subsequent clock audit found that live rendering in the initial scene
+verification added physics steps; its stated 10 Hz was nominal. The current
+saucepan controller renders while paused and explicitly resumes; collected data
+now verifies an actual 0.1 s action interval. Prior measured geometry/success
+reports are preserved, and are not relabeled as clock-validated data.

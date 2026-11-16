@@ -1,10 +1,10 @@
-# 微波炉专家来源标签修复报告
+# Microwave expert provenance correction
 
-更新时间：2026-11-15T15:08:43.456173+00:00。
-允许使用的物理 GPU：2、3、4。各分支共享 IL 初始化，使用独立在线随机种子。
+Updated: 2026-11-15T15:08:43.456173+00:00
+Allowed physical GPUs: 2, 3, 4. Shared IL initialization; independent online seeds.
 
-| GPU | 阶段 | 短实验基线 / 500 步 / 1000 步成功次数（各 20 次测试） | 完整训练最终 / 最佳成功次数（原计划各测试 100 次） |
+| GPU | Stage | Short baseline / 500 / 1000 | Final / best (100 each) |
 |---|---|---|---|
-| 2 | 短实验未通过门槛 | 16 / 5 / 1 | 未执行 / 未执行 |
-| 3 | 短实验未通过门槛 | 14 / 3 / 14 | 未执行 / 未执行 |
-| 4 | 短实验未通过门槛 | 17 / 6 / 4 | 未执行 / 未执行 |
+| 2 | short_failed_gate | 16 / 5 / 1 | - / - |
+| 3 | short_failed_gate | 14 / 3 / 14 | - / - |
+| 4 | short_failed_gate | 17 / 6 / 4 | - / - |

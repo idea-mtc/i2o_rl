@@ -3,7 +3,7 @@
     "source": "/Users/linxiaopeng/project/pingandog/i2o_rl-master/i2o_rl.py",
     "source_sha256": "d324f80fbe3b2d65ff595c9668d6289dee0936648c3b49eb6e274b2e7f17d9ae",
     "deployed_sha256": "b622408bf8304aa8184dda23252019793c9cea82d96fa3da8f5df47452672b00",
-    "modifications": "改为相对导入；增加可微的分层软动作分支、仅使用 MSE 的模仿更新接口和联合训练中的示范 MSE；支持软/硬动作执行模式配置。CNN 特征展开使用 reshape，以兼容四视角的非连续张量。"
+    "modifications": "Relative imports; differentiable hierarchical soft action branch; MSE-only imitation API; combined demo MSE; configurable soft/hard rollout. CNN feature flatten uses reshape for noncontiguous four-view tensors."
   },
   "utils.py": {
     "source": "/Users/linxiaopeng/project/pingandog/i2o_rl-master/utils.py",
@@ -14,6 +14,6 @@
     "source": "/Users/linxiaopeng/project/pingandog/i2o_rl-master/cqn_utils.py",
     "source_sha256": "4d7669c1d52e996c93e11068061097a799c987e87a5c0697d0996b041f5d3bf4",
     "deployed_sha256": "a97706f2bbb188e8bc972b877509a5dc0fc18356ec0f075fe7801019fe1f1bd3",
-    "modifications": "增加可微的 soft_zoom_in，保留原有硬解码辅助函数。"
+    "modifications": "Added differentiable soft_zoom_in; original hard helpers retained."
   }
 }
