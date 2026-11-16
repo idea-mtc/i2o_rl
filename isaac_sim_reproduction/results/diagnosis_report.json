@@ -1,0 +1,170 @@
+{
+  "completed_beijing": "2026-11-15T01:07:41.809513+08:00",
+  "training_update_limit_per_branch": 1000,
+  "long_training_started": false,
+  "production_models_modified": false,
+  "evaluation_seeds": [
+    900000,
+    900005,
+    900010,
+    900015,
+    900020,
+    900025,
+    900030,
+    900035,
+    900040,
+    900045,
+    900050,
+    900055,
+    900060,
+    900065,
+    900070,
+    900075,
+    900080,
+    900085,
+    900090,
+    900095
+  ],
+  "evaluations": {
+    "A_offline_il": [
+      {
+        "updates": 0,
+        "episodes": 20,
+        "successes": 16,
+        "success_rate": 0.8,
+        "checkpoint_sha256": "31097beb7acdd5d1376a224b8934087be71ac86ea049192274cf314e3ac39dd6"
+      },
+      {
+        "updates": 500,
+        "episodes": 20,
+        "successes": 8,
+        "success_rate": 0.4,
+        "checkpoint_sha256": "b1af6a862425bd3c335d8813e9322d45bc7f56694e9f8797e3a4d8d852cc7e8e"
+      },
+      {
+        "updates": 1000,
+        "episodes": 20,
+        "successes": 12,
+        "success_rate": 0.6,
+        "checkpoint_sha256": "3cf0ca5b16586b1156e8fdfca4a25cda54378751150b9f84c71cbf911a2255df"
+      }
+    ],
+    "B_online_td": [
+      {
+        "updates": 500,
+        "episodes": 20,
+        "successes": 1,
+        "success_rate": 0.05,
+        "checkpoint_sha256": "68c626ad2fc1186d43f8953b18480f931db5d04553f3545de83a14219f54effb"
+      },
+      {
+        "updates": 1000,
+        "episodes": 20,
+        "successes": 3,
+        "success_rate": 0.15,
+        "checkpoint_sha256": "b061dd55d8c9a6755635ab74f556e5b57dc6458b8861eb2dd048bbb13ba3f007"
+      }
+    ],
+    "C_matched_il": [
+      {
+        "updates": 500,
+        "episodes": 20,
+        "successes": 4,
+        "success_rate": 0.2,
+        "checkpoint_sha256": "3e5734ddcaf9bb1c089ef640eafe2e8905ea92d230b7e675151699091a1d9d55"
+      },
+      {
+        "updates": 1000,
+        "episodes": 20,
+        "successes": 0,
+        "success_rate": 0.0,
+        "checkpoint_sha256": "b1dffbb132cf2c76cc0295f3b89a247f0583d819457655615cd0a012910a2d9c"
+      }
+    ],
+    "C_replay_verified": [
+      {
+        "updates": 1000,
+        "episodes": 20,
+        "successes": 0,
+        "success_rate": 0.0,
+        "checkpoint_sha256": "432ea0bcafb51899ae47fba8b1d7de14762e1f620024bc10f08bd6f2d85545d6"
+      }
+    ],
+    "D_no_promotion": [
+      {
+        "updates": 1000,
+        "episodes": 20,
+        "successes": 13,
+        "success_rate": 0.65,
+        "checkpoint_sha256": "3d66e28fd529afd988c5df3118a2da12f81d08ac6712aaf5e72a542c6dac1c6e"
+      }
+    ],
+    "head_probe_A": [
+      {
+        "updates": 1000,
+        "episodes": 10,
+        "successes": 3,
+        "success_rate": 0.3,
+        "checkpoint_sha256": "3cf0ca5b16586b1156e8fdfca4a25cda54378751150b9f84c71cbf911a2255df"
+      }
+    ],
+    "head_probe_B": [
+      {
+        "updates": 1000,
+        "episodes": 10,
+        "successes": 1,
+        "success_rate": 0.1,
+        "checkpoint_sha256": "b061dd55d8c9a6755635ab74f556e5b57dc6458b8861eb2dd048bbb13ba3f007"
+      }
+    ]
+  },
+  "source_checkpoint_sha256": "31097beb7acdd5d1376a224b8934087be71ac86ea049192274cf314e3ac39dd6",
+  "reconstruction": {
+    "max_parameter_differences": {
+      "500": 0.0,
+      "1000": 0.0
+    },
+    "note": "Near-zero difference verifies replay and augmentation reconstruction; otherwise interpret C/D as a new paired fixed-stream ablation."
+  },
+  "first_promoted_sample_update": {
+    "step": 115,
+    "C": {
+      "loss": 0.005548495799303055,
+      "action_mse": 0.0008047379087656736,
+      "margin": 0.0047437576577067375,
+      "td_square": 0.0,
+      "encoder_grad_norm": 0.03341344010219413,
+      "soft_action_requires_grad": true
+    },
+    "D": {
+      "loss": 0.0026774811558425426,
+      "action_mse": 0.0008121654973365366,
+      "margin": 0.001865315600298345,
+      "td_square": 0.0,
+      "encoder_grad_norm": 0.029275820007368804,
+      "soft_action_requires_grad": true
+    },
+    "promoted_count": 4
+  },
+  "identical_losses_before_promotion": true,
+  "promoted_sample_count": 3796,
+  "total_sample_count": 256000,
+  "interpretation": {
+    "supported": "Successful-online promotion into the expert IL mask harms this microwave policy. Removing only that mask recovers13/20 vs0/20 on the exact matched IL-only stream.",
+    "not_supported": "TD alone causes the regression: matched IL-only C regressed more than B withTD.",
+    "continued_il_instability": "A goes16/20 baseline to8/20 at500 and12/20 at1000; further IL alone is not monotonic improvement.",
+    "head_lag_probe": "Replacing the frozen target critic with online critic does not restore performance in the10-seed probes.",
+    "caveats": [
+      "One initial training seed,20 fixed evaluation seeds; no repeated independent training runs.",
+      "A/C differ in replay sampling distribution/order and online labels; the C/D follow-up isolates only label promotion.",
+      "C/D have noTD. TD plus expert-only masking has not yet been evaluated.",
+      "All branches use target EMA tau0.02; A does not perform the warmup loop hard target copy every500.",
+      "Conclusion concerns current Isaac implementation and paper-text reconstruction, not a claim about original author results."
+    ]
+  },
+  "candidate_fix": {
+    "separate_flags": "Use expert provenance for action MSE/Q-margin mask; keep success solely for successful replay pool membership. Online samples still participate inTD, with original hyperparameters initially unchanged.",
+    "next_validation": "From validated_start run a bounded1000-update TD+expert-only-mask check before considering long training.",
+    "checkpoint_selection": "Fixed-seed evaluation and best-success checkpoint; monitor performance collapse, not only process liveness/motion."
+  }
+}

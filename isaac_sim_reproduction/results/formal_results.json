@@ -1,0 +1,42 @@
+[
+  {
+    "task": "saucepan",
+    "source": "outputs/aligned_night/job_20261113/result.json",
+    "online_steps": 30250,
+    "warm_updates": 1500,
+    "episodes": 100,
+    "successes": 85
+  },
+  {
+    "task": "open_door",
+    "source": "outputs/native_asset_training/run_20261113/open_door/result.json",
+    "online_steps": 30250,
+    "warm_updates": 3500,
+    "episodes": 100,
+    "successes": 81
+  },
+  {
+    "task": "open_drawer",
+    "source": "outputs/native_asset_training/run_20261113/open_drawer/result.json",
+    "online_steps": 30250,
+    "warm_updates": 2500,
+    "episodes": 100,
+    "successes": 93
+  },
+  {
+    "task": "open_microwave",
+    "source": "outputs/extended_asset_training/run_20261114/open_microwave/result.json",
+    "online_steps": 30250,
+    "warm_updates": 3500,
+    "episodes": 100,
+    "successes": 15
+  },
+  {
+    "task": "put_books_on_bookshelf",
+    "source": "outputs/extended_asset_training/run_20261114/put_books_on_bookshelf/result.json",
+    "online_steps": 30250,
+    "warm_updates": 1000,
+    "episodes": 100,
+    "successes": 85
+  }
+]

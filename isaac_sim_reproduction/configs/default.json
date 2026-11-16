@@ -1,0 +1,32 @@
+{
+  "robot": {
+    "name": "unitree_go2",
+    "usd": "assets/robot/go2/go2.usda",
+    "prim_path": "/World/Robot",
+    "note": "Mujoco_Menagerie variant (robot body); policy-paired variant lives in assets/policies/go2/"
+  },
+  "policy_bundle": {
+    "usd": "assets/policies/go2/go2.usda",
+    "policy": "assets/policies/go2/physx_policy.pt",
+    "env": "assets/policies/go2/physx_env.yaml",
+    "note": "Isaac 6.0 official Samples/Policies/go2; use this robot variant together with the policy"
+  },
+  "scenes": {
+    "office": {
+      "stage": "scenes/office_task_v6/office_task.usda",
+      "routes": "scenes/office_task_v6/routes.json",
+      "spawn_xy": [-2.0, -7.5],
+      "spawn_yaw_deg": 0.0,
+      "note": "lh_review_v1 office task v6, validated stage with 3 reference routes"
+    },
+    "sg_home": {
+      "stage": "scenes/sg_home/scene_pbr.usda",
+      "routes": "/home/ubuntu/navforge_stages/sg_review_v3/out/sg_home/route.json",
+      "spawn_xy": [-3.34, 2.89],
+      "spawn_yaw_deg": -71.0,
+      "note": "SG home (GRScenes MVUHLWYKTKJ5EAABAAAAAEI8), 116.7 m2; spawn = validated route pose[0]; 58 m route 18 stops, radius 0.25 m; layers copied to assets/scenes/sg_home (see PROVENANCE.md)"
+    }
+  },
+  "camera": { "width": 960, "height": 540 },
+  "sim": { "physics_dt": 0.005, "rendering_dt": 0.1, "stage_units_in_meters": 1.0 }
+}

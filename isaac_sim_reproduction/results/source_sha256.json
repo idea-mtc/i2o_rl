@@ -1,0 +1,8 @@
+{
+  "code/microwave_expert_fix.py": "24cc1362acd6b35d52381990f7100e1aa48811a716d9014cae7a1a65e2ffb674",
+  "code/supervise_expert_fix.py": "e3f1f3203cf900ebb5707cf426f370e9868c334751fc42fb88a2b860a91fbc91",
+  "code/test_expert_replay.py": "a396babadae43b0b2cecbbdbec1913ebe3c528bb246a57f0ce77aca8fa8ed2c4",
+  "code/aligned/expert_replay.py": "fa94fdee29fcf01b8564c7a1f47d64c4f474aaa68b83ad39b77579205f8e6d04",
+  "code/aligned/paper_update.py": "ff7cf827e24f2b5fc419595c445127626f3bde3f94aa561035a3b4a07a14823d",
+  "code/aligned/gpu_replay.py": "00df2ad95530c0f459275963eb1d9d990e87cea806287ebbd0f0e69bc2fbb43e"
+}

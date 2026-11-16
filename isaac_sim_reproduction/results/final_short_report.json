@@ -1,0 +1,122 @@
+{
+  "completed_beijing": "2026-11-15T23:11:40.394899+08:00",
+  "source_checkpoint_sha256": "31097beb7acdd5d1376a224b8934087be71ac86ea049192274cf314e3ac39dd6",
+  "full_training_started": false,
+  "branches": [
+    {
+      "gpu": 2,
+      "seed": 1,
+      "gate": {
+        "passed": false,
+        "baseline": 16,
+        "step500": 5,
+        "step1000": 1,
+        "episodes": 20,
+        "rule": "baseline>=14,500>=12,1000>=max(14,baseline-2)",
+        "legacy_reference_successes": 3
+      },
+      "updates": 1000,
+      "finite_metrics": true,
+      "expert_samples_min": 229,
+      "expert_samples_max": 256,
+      "provenance_tests": {
+        "passed": true,
+        "tests": 3
+      },
+      "result": {
+        "complete": true,
+        "stage": "short_failed_gate",
+        "full_training_started": false,
+        "online_steps": 1000,
+        "gate": {
+          "passed": false,
+          "baseline": 16,
+          "step500": 5,
+          "step1000": 1,
+          "episodes": 20,
+          "rule": "baseline>=14,500>=12,1000>=max(14,baseline-2)",
+          "legacy_reference_successes": 3
+        }
+      }
+    },
+    {
+      "gpu": 3,
+      "seed": 2,
+      "gate": {
+        "passed": false,
+        "baseline": 14,
+        "step500": 3,
+        "step1000": 14,
+        "episodes": 20,
+        "rule": "baseline>=14,500>=12,1000>=max(14,baseline-2)",
+        "legacy_reference_successes": 3
+      },
+      "updates": 1000,
+      "finite_metrics": true,
+      "expert_samples_min": 240,
+      "expert_samples_max": 256,
+      "provenance_tests": {
+        "passed": true,
+        "tests": 3
+      },
+      "result": {
+        "complete": true,
+        "stage": "short_failed_gate",
+        "full_training_started": false,
+        "online_steps": 1000,
+        "gate": {
+          "passed": false,
+          "baseline": 14,
+          "step500": 3,
+          "step1000": 14,
+          "episodes": 20,
+          "rule": "baseline>=14,500>=12,1000>=max(14,baseline-2)",
+          "legacy_reference_successes": 3
+        }
+      }
+    },
+    {
+      "gpu": 4,
+      "seed": 3,
+      "gate": {
+        "passed": false,
+        "baseline": 17,
+        "step500": 6,
+        "step1000": 4,
+        "episodes": 20,
+        "rule": "baseline>=14,500>=12,1000>=max(14,baseline-2)",
+        "legacy_reference_successes": 3
+      },
+      "updates": 1000,
+      "finite_metrics": true,
+      "expert_samples_min": 237,
+      "expert_samples_max": 256,
+      "provenance_tests": {
+        "passed": true,
+        "tests": 3
+      },
+      "result": {
+        "complete": true,
+        "stage": "short_failed_gate",
+        "full_training_started": false,
+        "online_steps": 1000,
+        "gate": {
+          "passed": false,
+          "baseline": 17,
+          "step500": 6,
+          "step1000": 4,
+          "episodes": 20,
+          "rule": "baseline>=14,500>=12,1000>=max(14,baseline-2)",
+          "legacy_reference_successes": 3
+        }
+      }
+    }
+  ],
+  "conclusion": "Expert-only IL mask plus unchanged TD is insufficient for stable microwave fine-tuning; all three branches failed the preregistered gate.",
+  "limitations": [
+    "Shared IL initialization; only online RNG seeds differ.",
+    "Same checkpoint baseline varies14..17/20 across runs: simulator/execution variability remains; do not interpret small differences as significance.",
+    "Historical B=3/20 is not a matched-stream control for these runs.",
+    "One early isolation probe briefly created6MiB GPU0 graphics context and was killed; all actual training used per-GPU device namespaces on2,3,4 only."
+  ]
+}

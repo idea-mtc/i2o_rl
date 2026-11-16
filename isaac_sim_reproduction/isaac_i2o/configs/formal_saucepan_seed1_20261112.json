@@ -1,0 +1,49 @@
+{
+  "task": "take_lid_off_saucepan",
+  "seed": 1,
+  "dataset": "datasets/take_lid_off_saucepan/fixed_100_20261112",
+  "dataset_manifest_sha256": "c9c7f39f38700d9565f8e119b7ac72afc5fadfbc7b337c5eac86897ef0d071ce",
+  "benchmark": "outputs/i2o_panda/run_20261112_075253/benchmark.json",
+  "cameras": 4,
+  "image_size": [
+    84,
+    84
+  ],
+  "frame_stack": 8,
+  "batch_size": 256,
+  "expert_episodes": 100,
+  "online_environment_steps": 30250,
+  "online_updates_per_step": 1,
+  "pretrain_updates": 1000,
+  "pretrain_mode": "mse",
+  "lr": 5e-05,
+  "optimizer": "AdamW",
+  "weight_decay": 0.1,
+  "discount": 0.99,
+  "levels": 3,
+  "bins": 5,
+  "atoms": 51,
+  "bc_lambda": 1.0,
+  "bc_margin": 0.01,
+  "critic_lambda": 0.1,
+  "softargmax_beta": 1.0,
+  "action_mode": "soft",
+  "capacity": 50000,
+  "checkpoint_every": 1000,
+  "eval_every": 5000,
+  "periodic_eval_episodes": 10,
+  "final_eval_episodes": 100,
+  "eval_seed": 100000,
+  "interpretation": "30250 means online environment steps and joint updates; 1000 MSE warmup updates counted separately",
+  "deviations": [
+    "Isaac Sim procedural task instead of original RLBench assets",
+    "I2O-only sparse +1 success reward; no VLP reward generation",
+    "8-frame stacking follows repository; 1000 warmup steps are an explicit choice not specified in paper",
+    "C51/FOSD losses retained from repository; not identical to simplified paper equations",
+    "Single seed first; three independent seeds not yet completed"
+  ],
+  "measured_estimate_hours": [
+    10,
+    12
+  ]
+}
