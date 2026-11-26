@@ -57,5 +57,9 @@ CUDA_VISIBLE_DEVICES=0 python train_dmc.py dmc_task=cartpole_swingup
 Warning: CQN is not extensively tested in DMC
 
 
+## Standalone LeWM drawer experiments
+
+[Training and evaluation code](isaac_sim_reproduction/lewm_drawer/README.md) for one-step and five-step latent predictions on Isaac Sim drawer trajectories.
+
 ## Acknowledgements
 This repository is based on public implementation of [DrQ-v2](https://github.com/facebookresearch/drqv2)
